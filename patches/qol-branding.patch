@@ -1,50 +1,5 @@
-diff --git a/packages/tui/src/logo.ts b/packages/tui/src/logo.ts
---- a/packages/tui/src/logo.ts
-+++ b/packages/tui/src/logo.ts
-@@ -1,9 +1,42 @@
- export const logo = {
-   left: ["                   ", "█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█__█ █__█ █^^^ █__█", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"],
-   right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
- }
- 
- export const go = {
-   left: ["    ", "█▀▀▀", "█_^█", "▀▀▀▀"],
-   right: ["    ", "█▀▀█", "█__█", "▀▀▀▀"],
- }
-+
-+// OpenCode QoL edition mark: three small lowercase letters set beside the
-+// official wordmark (assets/branding/opencode-qol-logo.png in opencode-qol).
-+export const edition = "qol"
-+const suffix = `-${edition}`
-+
-+// Display-only version label. The build keeps the real upstream version for
-+// update checks, service compatibility and state; only what users read gains
-+// a single "-qol", so a future core bump shows its own base version.
-+export function qolVersion(version: string) {
-+  const base = version.trim().replace(/^v(?=\d)/, "")
-+  if (!base) return base
-+  return base.endsWith(suffix) ? base : base + suffix
-+}
-+
-+export function qolVersionLabel(version: string) {
-+  const value = qolVersion(version)
-+  return /^\d/.test(value) ? `v${value}` : value
-+}
-+
-+export type EditionPlacement = "beside" | "corner" | "none"
-+
-+// "beside": after the last wordmark row, one cell gap, when the row fits.
-+// "corner": inside the free top-right cells of the wordmark's ascender row.
-+export function editionPlacement(input: { columns: number; wordmark: number; corner?: string }): EditionPlacement {
-+  if (input.wordmark + 1 + edition.length <= input.columns) return "beside"
-+  if (input.corner && input.corner.endsWith(" ".repeat(edition.length + 1))) return "corner"
-+  return "none"
-+}
-+
-+export function editionCorner(line: string) {
-+  return line.slice(0, line.length - edition.length)
-+}
 diff --git a/packages/cli/src/index.ts b/packages/cli/src/index.ts
+index a81de93..866fee9 100644
 --- a/packages/cli/src/index.ts
 +++ b/packages/cli/src/index.ts
 @@ -10,6 +10,7 @@ import { Observability } from "@opencode/util/observability"
@@ -66,6 +21,7 @@ diff --git a/packages/cli/src/index.ts b/packages/cli/src/index.ts
    Effect.catchCause((cause) =>
      Effect.logError("cli process failed", {
 diff --git a/packages/tui/src/component/dialog-debug.tsx b/packages/tui/src/component/dialog-debug.tsx
+index 546f47c..765555e 100644
 --- a/packages/tui/src/component/dialog-debug.tsx
 +++ b/packages/tui/src/component/dialog-debug.tsx
 @@ -9,6 +9,7 @@ import { useToast } from "../ui/toast"
@@ -86,9 +42,10 @@ diff --git a/packages/tui/src/component/dialog-debug.tsx b/packages/tui/src/comp
        { label: "OS", value: describeOS() },
        { label: "Terminal", value: describeTerminal() },
 diff --git a/packages/tui/src/component/logo.tsx b/packages/tui/src/component/logo.tsx
+index 2c3abc3..dbe49d8 100644
 --- a/packages/tui/src/component/logo.tsx
 +++ b/packages/tui/src/component/logo.tsx
-@@ -1,13 +1,46 @@
+@@ -1,11 +1,11 @@
  import { RGBA, TextAttributes } from "@opentui/core"
 -import { For, type JSX } from "solid-js"
 +import { createMemo, For, Show, type JSX } from "solid-js"
@@ -96,76 +53,80 @@ diff --git a/packages/tui/src/component/logo.tsx b/packages/tui/src/component/lo
  import { useTheme } from "../context/theme"
  import { tint } from "../theme/color"
 -import { go, logo } from "../logo"
-+import { edition, editionCorner, editionPlacement, go, logo } from "../logo"
++import { go, logo, qol } from "../logo"
  
 -export function Logo() {
 +export function Logo(props: { edition?: boolean }) {
    const theme = useTheme()
    const dimensions = useTerminalDimensions()
-+  // Home pads the logo by 2 columns per side in the wide layout and 1 below 44.
-+  const placement = createMemo(() => {
-+    if (!props.edition) return "none"
-+    const width = dimensions().width
-+    if (width < 22) return editionPlacement({ columns: width - 2, wordmark: go.right[1].length })
-+    if (width < 44)
-+      return editionPlacement({ columns: width - 2, wordmark: logo.right[1].length, corner: logo.right[0] })
-+    return editionPlacement({
-+      columns: width - 4,
-+      wordmark: logo.left[1].length + 1 + logo.right[1].length,
-+      corner: logo.right[0],
-+    })
-+  })
-+  const mark = () => (
-+    <text fg={theme.text.muted} selectable={false}>
-+      {edition}
-+    </text>
-+  )
-+  const right = (line: string, index: number, last: number): JSX.Element => {
-+    if (index === 0 && placement() === "corner")
-+      return (
-+        <box flexDirection="row">
-+          {renderLine(editionCorner(line), theme.text.base, true)}
-+          {mark()}
-+        </box>
-+      )
-+    return (
-+      <box flexDirection="row" gap={1}>
-+        <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>
-+        <Show when={index === last && placement() === "beside"}>{mark()}</Show>
-+      </box>
-+    )
-+  }
  
-   const renderLine = (line: string, fg: RGBA, bold: boolean): JSX.Element[] => {
-     const shadow = tint(theme.background.base, fg, 0.25)
-@@ -53,23 +86,21 @@ export function Logo() {
-     <box>
-       {dimensions().height < 12 ? null : dimensions().width < 22 ? (
-         <For each={go.right.slice(1)}>
+@@ -49,31 +49,42 @@ export function Logo() {
+     })
+   }
+ 
++  const showQol = createMemo(() => Boolean(props.edition && dimensions().width >= 72 && dimensions().height >= 12))
++
+   return (
+-    <box>
+-      {dimensions().height < 12 ? null : dimensions().width < 22 ? (
+-        <For each={go.right.slice(1)}>
 -          {(line) => <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>}
-+          {(line, index) => right(line, index() + 1, go.right.length - 1)}
-         </For>
-       ) : dimensions().width < 44 ? (
-         <>
-           <For each={logo.left.slice(1)}>
-             {(line) => <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>}
-           </For>
--          <For each={logo.right}>
--            {(line) => <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>}
+-        </For>
+-      ) : dimensions().width < 44 ? (
+-        <>
+-          <For each={logo.left.slice(1)}>
+-            {(line) => <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>}
 -          </For>
-+          <For each={logo.right}>{(line, index) => right(line, index(), logo.right.length - 1)}</For>
-         </>
-       ) : (
-         <For each={logo.left}>
-           {(line, index) => (
-             <box flexDirection="row" gap={1}>
-               <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>
+-          <For each={logo.right}>
++    <box position="relative">
++      <box>
++        {dimensions().height < 12 ? null : dimensions().width < 22 ? (
++          <For each={go.right.slice(1)}>
+             {(line) => <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>}
+           </For>
+-        </>
+-      ) : (
+-        <For each={logo.left}>
+-          {(line, index) => (
+-            <box flexDirection="row" gap={1}>
+-              <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>
 -              <box flexDirection="row">{renderLine(logo.right[index()], theme.text.base, true)}</box>
-+              {right(logo.right[index()], index(), logo.right.length - 1)}
-             </box>
-           )}
-         </For>
+-            </box>
+-          )}
+-        </For>
+-      )}
++        ) : dimensions().width < 44 ? (
++          <>
++            <For each={logo.left.slice(1)}>
++              {(line) => <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>}
++            </For>
++            <For each={logo.right}>
++              {(line) => <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>}
++            </For>
++          </>
++        ) : (
++          <For each={logo.left}>
++            {(line, index) => (
++              <box flexDirection="row" gap={1}>
++                <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>
++                <box flexDirection="row">{renderLine(logo.right[index()], theme.text.base, true)}</box>
++              </box>
++            )}
++          </For>
++        )}
++      </box>
++      <Show when={showQol()}>
++        <box position="absolute" left="100%" marginLeft={2} top={0}>
++          <For each={qol}>
++            {(line) => <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>}
++          </For>
++        </box>
++      </Show>
+     </box>
+   )
+ }
 diff --git a/packages/tui/src/feature-plugins/home/footer.tsx b/packages/tui/src/feature-plugins/home/footer.tsx
+index d31888c..0d6dcbd 100644
 --- a/packages/tui/src/feature-plugins/home/footer.tsx
 +++ b/packages/tui/src/feature-plugins/home/footer.tsx
 @@ -3,6 +3,7 @@ import { createMemo, Match, Show, Switch } from "solid-js"
@@ -185,7 +146,44 @@ diff --git a/packages/tui/src/feature-plugins/home/footer.tsx b/packages/tui/src
            </box>
          </Show>
        </box>
+diff --git a/packages/tui/src/logo.ts b/packages/tui/src/logo.ts
+index 8c570fb..f31766b 100644
+--- a/packages/tui/src/logo.ts
++++ b/packages/tui/src/logo.ts
+@@ -1,9 +1,28 @@
+ export const logo = {
+   left: ["                   ", "█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█__█ █__█ █^^^ █__█", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"],
+   right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
+ }
+
+ export const go = {
+   left: ["    ", "█▀▀▀", "█_^█", "▀▀▀▀"],
+   right: ["    ", "█▀▀█", "█__█", "▀▀▀▀"],
+ }
++
++// OpenCode QoL edition mark: matching 4-line block typography
++export const edition = "qol"
++const suffix = `-${edition}`
++
++export const qol = [
++  "          ▄   ",
++  "█▀▀█ █▀▀█ █   ",
++  "█__█ █__█ █   ",
++  "▀▀▀█ ▀▀▀▀ ▀▀  ",
++]
++
++export function qolVersion(version: string) {
++  const base = version.trim().replace(/^v(?=\d)/, "")
++  if (!base) return base
++  return base.endsWith(suffix) ? base : base + suffix
++}
++
++export function qolVersionLabel(version: string) {
++  const value = qolVersion(version)
++  return /^\d/.test(value) ? `v${value}` : value
++}
 diff --git a/packages/tui/src/mini/splash.ts b/packages/tui/src/mini/splash.ts
+index 123b224..23a884c 100644
 --- a/packages/tui/src/mini/splash.ts
 +++ b/packages/tui/src/mini/splash.ts
 @@ -15,7 +15,7 @@ import {
@@ -207,6 +205,7 @@ diff --git a/packages/tui/src/mini/splash.ts b/packages/tui/src/mini/splash.ts
    ]
    // Stop at the first non-fitting stage instead of backfilling lower-priority metadata.
 diff --git a/packages/tui/src/routes/home.tsx b/packages/tui/src/routes/home.tsx
+index 71e7b64..00898c9 100644
 --- a/packages/tui/src/routes/home.tsx
 +++ b/packages/tui/src/routes/home.tsx
 @@ -94,7 +94,7 @@ export function Home() {

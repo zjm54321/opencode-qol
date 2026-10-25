@@ -16,10 +16,9 @@ type LogoModule = {
   logo: { left: string[]; right: string[] };
   go: { left: string[]; right: string[] };
   edition: string;
+  qol: string[];
   qolVersion: (version: string) => string;
   qolVersionLabel: (version: string) => string;
-  editionPlacement: (input: { columns: number; wordmark: number; corner?: string }) => "beside" | "corner" | "none";
-  editionCorner: (line: string) => string;
 };
 
 let patch: string;
@@ -101,62 +100,30 @@ describe("edition mark", () => {
     expect(mod.edition).toBe("qol");
   });
 
-  // Mirrors packages/tui/src/component/logo.tsx + home padding (2/side >= 44 cols, else 1).
-  function layout(width: number) {
-    const { logo, go } = mod;
-    if (width < 22) {
-      const wordmark = go.right[1]!.length;
-      const place = mod.editionPlacement({ columns: width - 2, wordmark });
-      const rows = go.right.slice(1).map((l, i) => (i === 2 && place === "beside" ? `${l} qol` : l));
-      return { place, rows, columns: width - 2 };
+  test("qol is a matching 4-row ASCII block font", () => {
+    expect(Array.isArray(mod.qol)).toBe(true);
+    expect(mod.qol.length).toBe(4);
+    for (const row of mod.qol) {
+      expect(typeof row).toBe("string");
+      expect(row.length).toBe(14);
     }
-    if (width < 44) {
-      const place = mod.editionPlacement({ columns: width - 2, wordmark: logo.right[1]!.length, corner: logo.right[0] });
-      const right = logo.right.map((l, i) =>
-        i === 0 && place === "corner" ? mod.editionCorner(l) + "qol" : i === 3 && place === "beside" ? `${l} qol` : l,
-      );
-      return { place, rows: [...logo.left.slice(1), ...right], columns: width - 2 };
-    }
-    const wordmark = logo.left[1]!.length + 1 + logo.right[1]!.length;
-    const place = mod.editionPlacement({ columns: width - 4, wordmark, corner: logo.right[0] });
-    const rows = logo.left.map((l, i) => {
-      const r = logo.right[i]!;
-      const right = i === 0 && place === "corner" ? mod.editionCorner(r) + "qol" : i === 3 && place === "beside" ? `${r} qol` : r;
-      return `${l} ${right}`;
-    });
-    return { place, rows, columns: width - 4 };
-  }
-
-  test("is shown once and never overflows the padded home column at any width", () => {
-    for (let width = 10; width <= 240; width++) {
-      const { place, rows, columns } = layout(width);
-      expect(place).not.toBe("none");
-      expect(rows.join("\n").match(/qol/g)?.length).toBe(1);
-      for (const row of rows) expect([...row].length).toBeLessThanOrEqual(columns);
-    }
+    expect(mod.qol[1]).toContain("█▀▀█");
+    expect(mod.qol[3]).toContain("▀▀▀█");
   });
 
-  test("sits beside the wordmark when it fits and tucks into the ascender corner otherwise", () => {
-    expect(layout(80).place).toBe("beside");
-    expect(layout(47).place).toBe("beside");
-    expect(layout(46).place).toBe("corner");
-    expect(layout(44).place).toBe("corner");
-    expect(layout(25).place).toBe("beside");
-    expect(layout(24).place).toBe("corner");
-    expect(layout(22).place).toBe("corner");
-    expect(layout(80).rows[3]).toEndWith("▀▀▀▀ qol");
-    expect(layout(44).rows[0]).toEndWith("▄  qol");
+  test("component centers opencode dead-center with position: absolute for qol", () => {
+    const component = added("packages/tui/src/component/logo.tsx").join("\n");
+    expect(component).toContain("export function Logo(props: { edition?: boolean })");
+    expect(component).toContain('<box position="relative">');
+    expect(component).toContain('position="absolute"');
+    expect(component).toContain('left="100%"');
   });
 
-  test("wordmark glyphs are unchanged; only home opts in (stats keeps the plain logo)", () => {
+  test("wordmark glyphs are unchanged; only home opts in", () => {
     const body = sections(patch).get("packages/tui/src/logo.ts")!.join("\n");
     expect(body).not.toMatch(/^-(?!-- a\/)/m);
     expect(added("packages/tui/src/routes/home.tsx")).toEqual(["          <Logo edition />"]);
     expect(sections(patch).has("packages/tui/src/feature-plugins/system/stats.tsx")).toBe(false);
-    const component = added("packages/tui/src/component/logo.tsx").join("\n");
-    expect(component).toContain("export function Logo(props: { edition?: boolean })");
-    expect(component).toContain('if (!props.edition) return "none"');
-    expect(component).toContain("<text fg={theme.text.muted} selectable={false}>");
   });
 });
 
@@ -194,10 +161,20 @@ describe("branding assets", () => {
     return { width: view.getUint32(16), height: view.getUint32(20), colorType: bytes[25] };
   }
 
-  test("transparent logo PNG and dark preview exist with expected geometry", async () => {
-    expect(await ihdr("opencode-qol-logo.png")).toEqual({ width: 1933, height: 371, colorType: 6 });
-    const preview = await ihdr("opencode-qol-logo-preview-dark.png");
-    expect([preview.width, preview.height]).toEqual([967, 186]);
+  test("dark and light Sunburst logo PNGs exist and have valid RGBA geometry", async () => {
+    const dark = await ihdr("opencode-qol-logo-dark.png");
+    expect(dark.colorType).toBe(6);
+    expect(dark.width).toBeGreaterThan(500);
+    expect(dark.height).toBeGreaterThan(100);
+
+    const light = await ihdr("opencode-qol-logo-light.png");
+    expect(light.colorType).toBe(6);
+    expect(light.width).toBeGreaterThan(500);
+    expect(light.height).toBeGreaterThan(100);
+
+    const def = await ihdr("opencode-qol-logo.png");
+    expect(def.colorType).toBe(6);
+
     expect(existsSync(path.join(ROOT, "assets/branding/SOURCE.md"))).toBe(true);
   });
 });

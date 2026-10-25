@@ -38,17 +38,17 @@ export const definition = {
 
 // Never display raw subprocess, provider or RPC error strings (may contain secrets).
 export const reasons = {
-  arguments: "此命令不接受参数或附件",
-  compatibility: "当前 OpenCode 缺少清理所需接口，请检查客户端和服务的插件兼容性",
-  location: "无法确认当前会话所属位置",
-  database: "无法确认服务实际使用的本地数据库",
-  runtime: "独立 Bun 运行时不可用或不兼容，请在服务端将 OPENCODE_CLEAR_ENCRYPTED_BUN 设置为你信任的 Bun 可执行文件绝对路径",
-  busy: "当前会话已有清理操作正在进行",
-  stopped: "停止或等待会话结束失败，未执行清理",
-  cancelled: "操作已取消或超时；若已启动清理，请检查数据库状态",
-  helper: "清理进程未确认成功，请检查数据库状态",
-  refresh: "清理已提交，但界面刷新失败；请重新打开会话",
-  unknown: "操作失败，请检查服务状态；若连接中断，请检查数据库状态",
+  arguments: "This command does not accept arguments or attachments",
+  compatibility: "Current OpenCode host lacks required clearing interface",
+  location: "Unable to determine session location",
+  database: "Unable to determine local database",
+  runtime: "Standalone Bun runtime is unavailable or incompatible",
+  busy: "Clearing operation is already in progress for this session",
+  stopped: "Failed to stop or wait for session to end",
+  cancelled: "Operation was cancelled or timed out",
+  helper: "Clearing process was not confirmed, check database status",
+  refresh: "Clear was committed, but UI refresh failed; please reopen session",
+  unknown: "Operation failed, please check service status",
 } as const
 
 export function safeReason(error: unknown): string {

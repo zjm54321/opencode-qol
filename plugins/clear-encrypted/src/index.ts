@@ -218,13 +218,20 @@ export async function setupServer(ctx: ServerContext, deps: Dependencies = { tar
   })
   await ctx.command.transform((editor) => {
     editor.add({
-      name: id,
-      description: "清理当前会话的加密推理上下文，保留聊天记录（不接受参数或附件）",
+      name: "clear-encrypted-contents",
+      description: "Clear encrypted reasoning content from the current session while preserving chat history",
       async execute(input) {
         if (input.prompt.text.trim() || input.prompt.files?.length || input.prompt.agents?.length || input.prompt.skills?.length)
           throw new Error(reasons.arguments)
-        // V2 CommandInvocation has no AbortSignal. The shared guard still owns
-        // its timeout; RPC callers additionally provide their cancellation signal.
+        await clear({ sessionID: input.sessionID })
+      },
+    })
+    editor.add({
+      name: "clear-encrypted",
+      description: "Clear encrypted reasoning content from the current session while preserving chat history",
+      async execute(input) {
+        if (input.prompt.text.trim() || input.prompt.files?.length || input.prompt.agents?.length || input.prompt.skills?.length)
+          throw new Error(reasons.arguments)
         await clear({ sessionID: input.sessionID })
       },
     })

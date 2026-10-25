@@ -26,7 +26,7 @@ export default {
       // Palette shortcut only: the server command owns /clear-encrypted.
       commands: [{
         id,
-        title: "清理当前会话的加密推理上下文",
+        title: "Clear encrypted reasoning content in current session",
         palette: true,
         async run(input?: string) {
           // Missing operational APIs must not prevent registration of the shortcut.
@@ -35,7 +35,7 @@ export default {
           if (typeof ctx.ui?.router?.current !== "function" || typeof ctx.data?.session?.get !== "function"
             || typeof ctx.client?.rpc !== "function" || typeof ctx.data?.session?.message?.invalidate !== "function"
             || typeof ctx.data?.session?.message?.sync !== "function") {
-            ctx.ui.toast.show({ message: `清理未完成：${reasons.compatibility}`, variant: "error" })
+            ctx.ui.toast.show({ message: `Clear incomplete: ${reasons.compatibility}`, variant: "error" })
             return
           }
           const route = ctx.ui.router.current()
@@ -45,21 +45,21 @@ export default {
           const location = stored ? { ...stored } : undefined
           const toast = (message: string, variant: "info" | "success" | "error") =>
             ctx.ui.toast.show({ message, variant, ...(sessionID ? { sessionID } : {}) })
-          if (input?.trim()) return toast("此命令不接受参数", "error")
-          if (!sessionID) return toast("当前页面没有会话", "error")
+          if (input?.trim()) return toast(reasons.arguments, "error")
+          if (!sessionID) return toast("No active session on current page", "error")
           if (typeof location?.directory !== "string" || !location.directory.startsWith("/")
             || (location.workspaceID !== undefined && (typeof location.workspaceID !== "string" || !location.workspaceID.trim())))
-            return toast(`清理未完成：${reasons.location}`, "error")
-          if (pending.has(sessionID)) return toast(`清理未完成：${reasons.busy}`, "error")
+            return toast(`Clear incomplete: ${reasons.location}`, "error")
+          if (pending.has(sessionID)) return toast(`Clear incomplete: ${reasons.busy}`, "error")
           pending.add(sessionID)
-          toast("正在停止当前会话并清理加密推理上下文。", "info")
+          toast("Stopping current session and clearing encrypted reasoning content...", "info")
           try {
             const rpc = ctx.client.rpc(definition)
             if (typeof rpc?.clear !== "function") throw new Error(reasons.compatibility)
             const committed = await rpc.clear({ sessionID }, { location }) as ClearResult
             toast(committed.removedFields === 0
-              ? "当前会话没有可清理的加密推理字段"
-              : `已清理加密推理上下文，聊天记录已保留。\n消息 ${committed.changedMessages}，事件 ${committed.changedEvents}，字段 ${committed.removedFields}`, "success")
+              ? "No encrypted reasoning fields to clear in the current session"
+              : `Cleared encrypted reasoning content while preserving chat history.\nMessages: ${committed.changedMessages}, events: ${committed.changedEvents}, fields: ${committed.removedFields}`, "success")
             // Refresh is best-effort: a stalled sync must not hide the confirmed
             // commit or keep this command pending. Capture this result/session.
             void Promise.resolve().then(async () => {
@@ -69,7 +69,7 @@ export default {
               toast(reasons.refresh, "error")
             })
           } catch (error) {
-            toast(`清理未完成：${safeReason(error)}`, "error")
+            toast(`Clear incomplete: ${safeReason(error)}`, "error")
           } finally {
             pending.delete(sessionID)
           }

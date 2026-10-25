@@ -1,3 +1,47 @@
+diff --git a/packages/tui/src/feature-plugins/system/plugins.tsx b/packages/tui/src/feature-plugins/system/plugins.tsx
+--- a/packages/tui/src/feature-plugins/system/plugins.tsx
++++ b/packages/tui/src/feature-plugins/system/plugins.tsx
+@@ -10,6 +10,22 @@ import { useDialog } from "../../ui/dialog"
+ import { errorMessage } from "../../util/error"
+ 
+ const id = "opencode.plugins"
++
++// Bundled QoL plugins are user-facing even without external plugin configuration.
++const qolPlugins = new Set([
++  "oh-my-opencode-slim",
++  "oh-my-opencode-slim:tui",
++  "billion-context-opencode-native",
++  "opencode-qol",
++  "opencode-qol.native-pty",
++  "opencode-imagegen",
++  "session-reader",
++  "clear-encrypted",
++  "gpt-taste",
++  "provider-model-policy",
++  "opencode.desktop-bridge",
++  "qol-bundled-mcp",
++])
+ 
+ type Entry =
+   | { readonly key: string; readonly runtime: "server"; readonly internal: boolean; readonly plugin: PluginInfo }
+@@ -48,7 +64,7 @@ export function PluginsDialog(props: { context: Plugin.Context; plugins: ReturnTy
+       .map((plugin) => ({
+         key: `tui:${plugin.id}`,
+         runtime: "tui" as const,
+-        internal: true,
++        internal: !qolPlugins.has(plugin.id),
+         id: plugin.id,
+         target: plugin.id,
+         status: plugin.active ? ("active" as const) : ("inactive" as const),
+@@ -68,7 +84,7 @@ export function PluginsDialog(props: { context: Plugin.Context; plugins: ReturnTy
+     const serverEntries: Entry[] = (server() ?? []).map((plugin) => ({
+       key: `server:${plugin.id ?? source(plugin, props.context)}`,
+       runtime: "server" as const,
+-      internal: plugin.source.type === "builtin",
++      internal: plugin.source.type === "builtin" && !qolPlugins.has(plugin.id ?? ""),
+       plugin,
+     }))
+     return [
 diff --git a/packages/tui/src/mini/tool.ts b/packages/tui/src/mini/tool.ts
 --- a/packages/tui/src/mini/tool.ts
 +++ b/packages/tui/src/mini/tool.ts

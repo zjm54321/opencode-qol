@@ -41,6 +41,19 @@ describe.skipIf(!source || !modules || !binary)("patched official core/native wi
     expect(created.terminal.tool.retainOnExit).toBe(true)
     expect(created.terminal.created_at).toBeGreaterThan(0)
     expect(created.terminal.termination_error).toBeNull()
+    const schema = await import(path.resolve(path.dirname(source!), "../../../schema/src/persistent-pty.ts"))
+    const decodeInfo = E.Schema.decodeUnknownSync(schema.Info)
+    const info = { id: "pty_1", title: "core-wire", command: "bash", args: [], cwd: directory,
+      status: "running", pid: created.terminal.pid, sessionID: "ses_contract", foregroundProcess: null,
+      size: { cols: 80, rows: 24 }, output: { head: 0, tail: 0 } }
+    for (const value of [undefined, null]) {
+      expect(decodeInfo({ ...info, tool: value, createdAt: value, exitSignal: value,
+        killed: value, timedOut: value, terminationError: value })).toMatchObject(info)
+    }
+    expect(decodeInfo(info)).toEqual(info)
+    expect(decodeInfo({ ...info, tool: { retainOnExit: true }, createdAt: 1, exitSignal: "SIGTERM",
+      killed: true, timedOut: false, terminationError: "stop failed" })).toMatchObject({
+        exitSignal: "SIGTERM", killed: true, timedOut: false, terminationError: "stop failed" })
     const failure = E.Schema.decodeUnknownSync(core.WireTerminal)({ ...created.terminal, termination_error: "timeout termination failed: injected; retry pty_kill" })
     expect(failure.termination_error).toContain("retry pty_kill")
     let finish!: (event: any) => void
@@ -85,6 +98,13 @@ describe.skipIf(!source || !modules || !binary)("patched official core/native wi
     try {
       const terminal = await E.Effect.runPromise(pty.create("ses_core", { command: "bash", args: ["-c", "read -r line; printf 'retained-pane-final\\n'"],
         title: "pane", cwd: directory, env: {}, tool: { retainOnExit: true } }))
+      expect(terminal).not.toHaveProperty("exitSignal")
+      expect(terminal).not.toHaveProperty("terminationError")
+      const listed = await E.Effect.runPromise(pty.list("ses_core"))
+      expect(listed).toHaveLength(1)
+      expect(listed[0]).toMatchObject({ id: terminal.id, status: "running" })
+      expect(listed[0]).not.toHaveProperty("exitSignal")
+      expect(listed[0]).not.toHaveProperty("terminationError")
       const ended = (role: string) => {
         let done!: () => void
         const promise = new Promise<void>((resolve) => { done = resolve })

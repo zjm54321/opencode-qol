@@ -150,7 +150,7 @@ diff --git a/packages/tui/src/logo.ts b/packages/tui/src/logo.ts
 index 8c570fb..f31766b 100644
 --- a/packages/tui/src/logo.ts
 +++ b/packages/tui/src/logo.ts
-@@ -1,9 +1,28 @@
+@@ -1,9 +1,31 @@
  export const logo = {
    left: ["                   ", "█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█__█ █__█ █^^^ █__█", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"],
    right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],

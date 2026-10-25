@@ -1,0 +1,4 @@
+Package version: 1.0.0
+Upstream: https://github.com/AntonioCardenas/generate-nanobanana
+Upstream commit: 725d003705b432a9ee8ffeb209a48aeb149c019b
+Bundled reference skill snapshot; not a JavaScript runtime dependency.

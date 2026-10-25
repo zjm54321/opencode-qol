@@ -1,0 +1,13 @@
+diff --git a/packages/plugin/src/host.ts b/packages/plugin/src/host.ts
+--- a/packages/plugin/src/host.ts
++++ b/packages/plugin/src/host.ts
+@@ -24,7 +24,8 @@ export function resolve(target: Target): Entrypoints {
+         return resolveModule(specifier, target.directory)
+       } catch (error) {
+         if (
+-          !(error instanceof Error) ||
++          typeof error !== "object" ||
++          error === null ||
+           !("code" in error) ||
+           ![
+             "ENOENT",

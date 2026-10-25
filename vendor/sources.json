@@ -1,0 +1,14 @@
+{
+  "oh-my-opencode-slim": {
+    "repository": "https://github.com/alvinunreal/oh-my-opencode-slim",
+    "revision": "fc76b4fc1f41520c0923916564f7a3ef51f5bc7b",
+    "version": "3.0.5",
+    "license": "MIT"
+  },
+  "billion-context": {
+    "repository": "https://github.com/ranxianglei/billion-context",
+    "revision": "6deb4547e57af6203bcedd3739fdc63b75443aec",
+    "version": "0.1.202",
+    "license": "MIT with additional product-surface attribution term; see LICENSE"
+  }
+}

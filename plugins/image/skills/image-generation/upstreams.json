@@ -1,0 +1,41 @@
+{
+  "openai": {
+    "repository": "https://github.com/openai/skills.git",
+    "directory": "skills/.system/imagegen",
+    "commit": "49f948faa9258a0c61caceaf225e179651397431",
+    "files": {
+      "agents/openai.yaml": "fafccbf7ded0d78be24c7dc1c0a2e0ac1bbf27bfd13a1fed969da643d973826a",
+      "assets/imagegen-small.svg": "cff5f34f57ff60b3ee92eaedd17b15e96dd4b9e776df3e78936c9e00d42be294",
+      "assets/imagegen.png": "95952f644064eb9e890f98d8db07216347186526e4c41ad66d3420629eb86e20",
+      "LICENSE.txt": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9",
+      "references/cli.md": "4d471758fb136146a51848fb9cdea0c7e03dac834a426307b0b66290e850ce46",
+      "references/codex-network.md": "dd6e85cb3da3589cab0f65be15b2c8f9d19633d9490f0a4b0fef5fd243d0464c",
+      "references/image-api.md": "005d8db53d05223dda473f255b3576b95dff239d6dfbf544a454110e98aa87b5",
+      "references/prompting.md": "e547ff9fe8e0de8e844c70a550e0b66e0f72323307e5acd0e562678f10eb0db2",
+      "references/sample-prompts.md": "82b0e14db9eace50fca0a4e728b535ded0f3661893538e6b15b18a9a82b71d5b",
+      "scripts/image_gen.py": "eaffd8fe4cde5722d748cc35729a03438d6b8fda5e84edd46ea1ce521d41f58b",
+      "SKILL.md": "826d05b806d51fa81cd650f1c0854b0a1f7fbccd1b152c588ded1797a2e7218f"
+    }
+  },
+  "nanobanana": {
+    "repository": "https://github.com/AntonioCardenas/generate-nanobanana.git",
+    "directory": ".",
+    "commit": "725d003705b432a9ee8ffeb209a48aeb149c019b",
+    "files": {
+      ".gitignore": "cf237c7aff44efbe6e502e645c3e06da03a69d7bdeb43392108ef3348143417e",
+      "CODE_OF_CONDUCT.md": "8b3dc743993f08c0208280eaade0f94bab16e18274e5c5b47f61441581549d76",
+      "CONTRIBUTING.md": "e993a89379397ad387002c3065bdfa541f00702e57e71c46533556b5b873cfee",
+      "LICENSE": "2b46b3e26d28d726b6bc5401cbc58dae3054801d804abc9657c254668ae32a18",
+      "models/gemini-omni-flash.md": "066476b9be352df96d5c0257b8bfb487a32cd366a313642d5def7485e7e9c8c2",
+      "models/nano-banana-2-lite.md": "84083493160e29b8494354e05af8e6651a32cb9a615d038576ecde9ec3fa8567",
+      "models/nano-banana-2.md": "32802a3852d069a76c8ee322c82160938343b2d2f46fdc535d575fc19b165b09",
+      "models/nano-banana-pro.md": "8f4612081e7d4c451be9ff959de7c2839cf02c323dc819495a26b8695d54de19",
+      "nanobanana_y2k_poster.png": "700a579dacca32f70ce669f5fc10e5f74ce125765250c32dcfa4c3388e93413d",
+      "package.json": "72889e25518367f6dd1d9cbcee531de791c8433eb69a884c7eb4fad3e4b71237",
+      "README.es.md": "8a8b8ad3a39ba56ae4850bcf6d70df80294b976b3c8cd23dd62a8831b7943020",
+      "README.md": "1327a5475d1a7c50e4c1ff7ac0c8b8fc88d7918c566cd80b86c53f270869650a",
+      "SECURITY.md": "6611659920b42b8c0bd481125e7f17eae591a5280c91fcca30c88c23ba62c00d",
+      "SKILL.md": "cbc3b104d27f8fcdf6fd437ce2ae2e668cb9d5563d94b74e5b318bb7928bf3f9"
+    }
+  }
+}

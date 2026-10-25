@@ -2,3 +2,5 @@ node_modules/
 result
 result-*
 .slim/deepwork/
+isolated/
+run-isolated.sh

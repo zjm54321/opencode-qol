@@ -41,90 +41,6 @@ index 546f47c..765555e 100644
        { label: "Date", value: new Date().toISOString() },
        { label: "OS", value: describeOS() },
        { label: "Terminal", value: describeTerminal() },
-diff --git a/packages/tui/src/component/logo.tsx b/packages/tui/src/component/logo.tsx
-index 2c3abc3..dbe49d8 100644
---- a/packages/tui/src/component/logo.tsx
-+++ b/packages/tui/src/component/logo.tsx
-@@ -1,11 +1,11 @@
- import { RGBA, TextAttributes } from "@opentui/core"
--import { For, type JSX } from "solid-js"
-+import { createMemo, For, Show, type JSX } from "solid-js"
- import { useTerminalDimensions } from "@opentui/solid"
- import { useTheme } from "../context/theme"
- import { tint } from "../theme/color"
--import { go, logo } from "../logo"
-+import { go, logo, qol } from "../logo"
- 
--export function Logo() {
-+export function Logo(props: { edition?: boolean }) {
-   const theme = useTheme()
-   const dimensions = useTerminalDimensions()
- 
-@@ -49,31 +49,42 @@ export function Logo() {
-     })
-   }
- 
-+  const showQol = createMemo(() => Boolean(props.edition && dimensions().width >= 72 && dimensions().height >= 12))
-+
-   return (
--    <box>
--      {dimensions().height < 12 ? null : dimensions().width < 22 ? (
--        <For each={go.right.slice(1)}>
--          {(line) => <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>}
--        </For>
--      ) : dimensions().width < 44 ? (
--        <>
--          <For each={logo.left.slice(1)}>
--            {(line) => <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>}
--          </For>
--          <For each={logo.right}>
-+    <box position="relative">
-+      <box>
-+        {dimensions().height < 12 ? null : dimensions().width < 22 ? (
-+          <For each={go.right.slice(1)}>
-             {(line) => <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>}
-           </For>
--        </>
--      ) : (
--        <For each={logo.left}>
--          {(line, index) => (
--            <box flexDirection="row" gap={1}>
--              <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>
--              <box flexDirection="row">{renderLine(logo.right[index()], theme.text.base, true)}</box>
--            </box>
--          )}
--        </For>
--      )}
-+        ) : dimensions().width < 44 ? (
-+          <>
-+            <For each={logo.left.slice(1)}>
-+              {(line) => <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>}
-+            </For>
-+            <For each={logo.right}>
-+              {(line) => <box flexDirection="row">{renderLine(line, theme.text.base, true)}</box>}
-+            </For>
-+          </>
-+        ) : (
-+          <For each={logo.left}>
-+            {(line, index) => (
-+              <box flexDirection="row" gap={1}>
-+                <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>
-+                <box flexDirection="row">{renderLine(logo.right[index()], theme.text.base, true)}</box>
-+              </box>
-+            )}
-+          </For>
-+        )}
-+      </box>
-+      <Show when={showQol()}>
-+        <box position="absolute" left="100%" marginLeft={2} top={0}>
-+          <For each={qol}>
-+            {(line) => <box flexDirection="row">{renderLine(line, theme.text.muted, false)}</box>}
-+          </For>
-+        </box>
-+      </Show>
-     </box>
-   )
- }
 diff --git a/packages/tui/src/feature-plugins/home/footer.tsx b/packages/tui/src/feature-plugins/home/footer.tsx
 index d31888c..0d6dcbd 100644
 --- a/packages/tui/src/feature-plugins/home/footer.tsx
@@ -147,10 +63,9 @@ index d31888c..0d6dcbd 100644
          </Show>
        </box>
 diff --git a/packages/tui/src/logo.ts b/packages/tui/src/logo.ts
-index 8c570fb..f31766b 100644
 --- a/packages/tui/src/logo.ts
 +++ b/packages/tui/src/logo.ts
-@@ -1,9 +1,31 @@
+@@ -1,9 +1,22 @@
  export const logo = {
    left: ["                   ", "█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█__█ █__█ █^^^ █__█", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"],
    right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
@@ -161,16 +76,7 @@ index 8c570fb..f31766b 100644
    right: ["    ", "█▀▀█", "█__█", "▀▀▀▀"],
  }
 +
-+// OpenCode QoL edition mark: matching 4-line block typography
-+export const edition = "qol"
-+const suffix = `-${edition}`
-+
-+export const qol = [
-+  "           ",
-+  "           ",
-+  " ▛▀▜ ▛▀▜ ▌ ",
-+  " ▀▀▌ ▙▄▟ ▀ ",
-+]
++const suffix = "-qol"
 +
 +export function qolVersion(version: string) {
 +  const base = version.trim().replace(/^v(?=\d)/, "")
@@ -204,16 +110,3 @@ index 123b224..23a884c 100644
      ...paths.concat(detail ? [detail] : []).map((path) => ({ path })),
    ]
    // Stop at the first non-fitting stage instead of backfilling lower-priority metadata.
-diff --git a/packages/tui/src/routes/home.tsx b/packages/tui/src/routes/home.tsx
-index 71e7b64..00898c9 100644
---- a/packages/tui/src/routes/home.tsx
-+++ b/packages/tui/src/routes/home.tsx
-@@ -94,7 +94,7 @@ export function Home() {
-             setLogoWidth(this.width)
-           }}
-         >
--          <Logo />
-+          <Logo edition />
-         </box>
-         <box height={1} flexShrink={0} />
-         <UpdateNotification width={logoWidth()} />

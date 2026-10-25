@@ -8,6 +8,7 @@ export interface ImageEngineConfig {
   baseURL?: string;
   default_model?: string;
   available_models?: string[];
+  whitelist?: string[];
 }
 
 export interface ImageGenerationPluginConfig {
@@ -60,8 +61,36 @@ function mergeEngine(target: ImageEngineConfig, source: any): void {
   for (const field of ["enabled", "default_model", "available_models"] as const) {
     if (source[field] !== undefined) (target as any)[field] = source[field];
   }
-  target.apiKey = resolveTemplate(source.apiKey ?? source.api_key) ?? target.apiKey;
-  target.baseURL = resolveTemplate(source.baseURL ?? source.base_url) ?? target.baseURL;
+  const rawKey = source.apiKey ?? source.api_key ?? source.settings?.apiKey;
+  const rawUrl = source.baseURL ?? source.base_url ?? source.settings?.baseURL;
+  target.apiKey = resolveTemplate(rawKey) ?? target.apiKey;
+  target.baseURL = resolveTemplate(rawUrl) ?? target.baseURL;
+
+  // 自定义 models 声明（支持对象或数组形式）
+  if (source.models) {
+    const customModels = Array.isArray(source.models)
+      ? source.models
+      : typeof source.models === "object"
+      ? Object.keys(source.models)
+      : [];
+    target.available_models = [...new Set([...(target.available_models || []), ...customModels])];
+  }
+
+  // whitelist 白名单支持
+  const whitelist = source.whitelist ?? source.white_list ?? source.models_whitelist;
+  if (Array.isArray(whitelist) && whitelist.length > 0) {
+    target.whitelist = whitelist;
+    target.available_models = (target.available_models || []).filter(
+      (m) => whitelist.includes(m) || whitelist.includes("*")
+    );
+    if (target.available_models.length === 0) {
+      target.available_models = [...whitelist];
+    }
+    if (target.default_model && !target.available_models.includes(target.default_model)) {
+      target.default_model = target.available_models[0];
+    }
+  }
+
   if (source.default_model !== undefined && source.available_models === undefined) {
     target.available_models = [...new Set([...(target.available_models || []), source.default_model])];
   }
@@ -91,9 +120,17 @@ export function loadConfiguration(
     }
   }
   const dedicated = hostOpencodeConfig ? {} : readJsonFile(path.join(configDir, "imagegen.json"));
-  for (const custom of [dedicated.image_generation ?? dedicated, ...roots.map(root => root.image_generation)]) {
+  const imageSources = [
+    dedicated.image_providers ?? dedicated.image_generation ?? dedicated,
+    ...roots.flatMap((root) => [
+      root.image_providers,
+      root.imageProviders,
+      root.image_generation,
+    ]).filter(Boolean),
+  ];
+  for (const custom of imageSources) {
     mergeEngine(result.openai, custom?.openai);
-    mergeEngine(result.nanobanana, custom?.nanobanana);
+    mergeEngine(result.nanobanana, custom?.google ?? custom?.nanobanana);
   }
   result.openai.apiKey ||= process.env.OPENAI_API_KEY;
   result.nanobanana.apiKey ||= process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;

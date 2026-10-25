@@ -1,6 +1,23 @@
 {
   "$schema": "https://unpkg.com/oh-my-opencode-slim@3.0.6/oh-my-opencode-slim.schema.json",
   "autoUpdate": false,
+  "preset": "default",
+  "presets": {
+    "default": {
+      "orchestrator": { "model": "google/gemini-3.8-flash", "variant": "medium" },
+      "oracle": { "model": "google/gemini-3.8-flash", "variant": "high" },
+      "explorer": { "model": "google/gemini-3.8-flash", "variant": "low" },
+      "designer": { "model": "google/gemini-3.8-flash", "variant": "medium" },
+      "fixer": { "model": "google/gemini-3.8-flash", "variant": "low" }
+    },
+    "fast": {
+      "orchestrator": { "model": "google/gemini-3.8-flash", "variant": "low" },
+      "oracle": { "model": "google/gemini-3.8-flash", "variant": "medium" },
+      "explorer": { "model": "google/gemini-3.8-flash", "variant": "low" },
+      "designer": { "model": "google/gemini-3.8-flash", "variant": "low" },
+      "fixer": { "model": "google/gemini-3.8-flash", "variant": "low" }
+    }
+  },
   "disabled_agents": ["observer"],
   "agents": {
     "explorer": {

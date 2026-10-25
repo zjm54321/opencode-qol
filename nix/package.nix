@@ -73,6 +73,7 @@ upstream.overrideAttrs (old: {
     export QOL_MCP_SERVERS_CONFIG=${mcpServers.config}
     export QOL_BUN=${lib.getExe pkgs.bun}
     export QOL_AST_GREP=${lib.getExe mcpServers.astGrep}
+    export QOL_BASH="${pkgs.bashInteractive}/bin/bash"
     # Builds the checked-in OMO/Billion sources using integrity-locked library
     # inputs before the upstream CLI's static Bun compilation. No npm install.
     node ${./prepare-source.mjs}

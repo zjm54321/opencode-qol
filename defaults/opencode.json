@@ -11,6 +11,17 @@
     "explore": { "disabled": true }
   },
   "update": "disable",
+  "disabled_providers": [
+    "opencode"
+  ],
+  "permission": {
+    "external_directory": {
+      "*": "ask",
+      "/etc/nixos/**": "allow",
+      "/nix/store/**": "allow",
+      "/tmp/**": "allow"
+    }
+  },
   "compaction": {
     "auto": false
   },

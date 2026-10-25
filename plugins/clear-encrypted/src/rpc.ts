@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-export const id = "clear-encrypted"
+export const id = "opencode.qol.clear-encrypted-contents"
 
 export type ClearResult = {
   ok: true

@@ -80,7 +80,7 @@ let
     export { policyMap, shouldKeep };
 
     export default {
-      id: "provider-model-policy",
+      id: "opencode.qol.model-policy",
       async setup(ctx) {
         const policies = await loadPolicies(ctx.location.directory);
         const registration = await ctx.model.transform((editor) => {

@@ -12,14 +12,14 @@ diff --git a/packages/tui/src/feature-plugins/system/plugins.tsx b/packages/tui/
 +  "oh-my-opencode-slim:tui",
 +  "billion-context-opencode-native",
 +  "opencode-qol",
-+  "opencode-qol.native-pty",
-+  "opencode-imagegen",
-+  "session-reader",
-+  "clear-encrypted",
-+  "gpt-taste",
-+  "provider-model-policy",
-+  "opencode.desktop-bridge",
-+  "qol-bundled-mcp",
++  "opencode.qol.native-pty",
++  "opencode.qol.image",
++  "opencode.qol.session-reader",
++  "opencode.qol.clear-encrypted-contents",
++  "opencode.qol.gpt-taste",
++  "opencode.qol.model-policy",
++  "opencode.qol.desktop-bridge",
++  "opencode.qol.bundled-mcp",
 +])
  
  type Entry =
@@ -29,7 +29,7 @@ diff --git a/packages/tui/src/feature-plugins/system/plugins.tsx b/packages/tui/
          key: `tui:${plugin.id}`,
          runtime: "tui" as const,
 -        internal: true,
-+        internal: !qolPlugins.has(plugin.id),
++        internal: !(plugin.id.startsWith("opencode.qol.") || qolPlugins.has(plugin.id)),
          id: plugin.id,
          target: plugin.id,
          status: plugin.active ? ("active" as const) : ("inactive" as const),
@@ -38,10 +38,58 @@ diff --git a/packages/tui/src/feature-plugins/system/plugins.tsx b/packages/tui/
        key: `server:${plugin.id ?? source(plugin, props.context)}`,
        runtime: "server" as const,
 -      internal: plugin.source.type === "builtin",
-+      internal: plugin.source.type === "builtin" && !qolPlugins.has(plugin.id ?? ""),
++      internal: plugin.source.type === "builtin" && !((plugin.id ?? "").startsWith("opencode.qol.") || qolPlugins.has(plugin.id ?? "")),
        plugin,
      }))
      return [
+diff --git a/packages/tui/src/app.tsx b/packages/tui/src/app.tsx
+--- a/packages/tui/src/app.tsx
++++ b/packages/tui/src/app.tsx
+@@ -1069,23 +1069,23 @@
+-      ...(client.restart
+-        ? [
+-            {
+-              name: "service.restart",
+-              title: "Restart service",
+-              slash: { name: "restart" },
+-              run: async () => {
+-                const restart = client.restart
+-                if (!restart) return
+-                dialog.clear()
+-                toast.show({ variant: "info", message: "Restarting service…", duration: 30000 })
+-                // restart resolves once the replacement service is healthy; the
+-                // event stream reattaches through the reconnect loop.
+-                await restart()
+-                  .then(() => toast.show({ variant: "success", message: "Service restarted" }))
+-                  .catch(toast.error)
+-              },
+-              category: "System",
+-            },
+-          ]
+-        : []),
++      {
++        name: "service.restart",
++        title: "Restart service",
++        slash: { name: "restart" },
++        run: async () => {
++          const restart = client.restart
++          dialog.clear()
++          if (!restart) {
++            toast.show({ variant: "info", message: "Reloading in standalone mode…", duration: 30000 })
++            keymap.dispatch("location.reload")
++            return
++          }
++          toast.show({ variant: "info", message: "Restarting service…", duration: 30000 })
++          // restart resolves once the replacement service is healthy; the
++          // event stream reattaches through the reconnect loop.
++          await restart()
++            .then(() => toast.show({ variant: "success", message: "Service restarted" }))
++            .catch(toast.error)
++        },
++        category: "System",
++      },
+       {
+         name: "location.reload",
 diff --git a/packages/tui/src/mini/tool.ts b/packages/tui/src/mini/tool.ts
 --- a/packages/tui/src/mini/tool.ts
 +++ b/packages/tui/src/mini/tool.ts

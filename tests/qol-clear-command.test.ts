@@ -17,6 +17,7 @@ function deferred<T = void>() {
 async function harness(edit?: (ctx: ServerContext, deps: Dependencies) => void) {
   const calls: string[] = [];
   let command!: CommandDefinition;
+  const commands: CommandDefinition[] = [];
   let rpc!: Parameters<ServerContext["rpc"]["register"]>[1];
   const location = { directory: "/workspace", workspaceID: "ws-current" };
   const session = { id: "ses-current", projectID: "project-current", location };
@@ -28,7 +29,7 @@ async function harness(edit?: (ctx: ServerContext, deps: Dependencies) => void) 
       interrupt: mock(async () => { calls.push("interrupt"); }),
       wait: mock(async () => { calls.push("wait"); }),
     },
-    command: { transform: mock(async edit => edit({ add: value => { command = value; } })) },
+    command: { transform: mock(async edit => edit({ add: value => { command = value; commands.push(value); } })) },
     rpc: { register: mock(async (schema, handlers) => { expect(schema).toBe(definition); rpc = handlers; }) },
   };
   const deps: Dependencies = {
@@ -41,13 +42,14 @@ async function harness(edit?: (ctx: ServerContext, deps: Dependencies) => void) 
   const rpcCall = (input: unknown, signal = new AbortController().signal) => rpc.clear(input, {
     signal, error: (type, message, data) => ({ type, message, data }),
   });
-  return { command, rpcCall, ctx, deps, calls, session };
+  return { command, commands, rpcCall, ctx, deps, calls, session };
 }
 
 describe("clear-encrypted direct server command", () => {
   test("registers and executes without a model prompt, using the same guarded helper as RPC", async () => {
     const h = await harness();
-    expect(h.command.name).toBe("clear-encrypted");
+    expect(h.command.name).toBe("clear-encrypted-contents");
+    expect(h.commands.map(command => command.name)).toEqual(["clear-encrypted-contents"]);
     expect(await h.command.execute(invocation())).toBeUndefined();
     expect(h.calls).toEqual(["target", "get", "interrupt", "wait", "helper"]);
     expect(h.ctx.session.interrupt).toHaveBeenCalledWith({ sessionID: "ses-current", resume: false }, { signal: expect.any(AbortSignal) });

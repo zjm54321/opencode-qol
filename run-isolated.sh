@@ -10,6 +10,12 @@ OPENCODE_BIN="$(nix build "$SCRIPT_DIR#default" --no-link --print-out-paths)/bin
 
 mkdir -p "$DATA_DIR" "$STATE_DIR" "$CACHE_DIR"
 
+# Seed history once from production; all subsequent writes target this private copy.
+if [ -f "$HOME/.local/share/opencode/opencode.db" ] && [ ! -e "$DATA_DIR/opencode/opencode.db" ]; then
+  mkdir -p "$DATA_DIR/opencode"
+  cp -- "$HOME/.local/share/opencode/opencode.db"* "$DATA_DIR/opencode/"
+fi
+
 # 检查首个参数是否为特定子命令；若是普通运行（TUI）则自动附加 --standalone 保证完全独立
 subcommands="upgrade update uninstall acp api debug auth mcp plugin models stats mini run session service reload pair serve"
 is_subcommand=false

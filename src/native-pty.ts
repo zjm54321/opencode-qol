@@ -55,7 +55,7 @@ const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`
 const display = (info: PersistentPty.Info) => ({ ...info, status: info.killed ? "killed" : info.status })
 
 export const Plugin = {
-  id: "opencode-qol.native-pty",
+  id: "opencode.qol.native-pty",
   effect: Effect.fn("NativePty.Plugin")(function* (ctx: Context) {
     const pty = yield* PersistentPty.Service
     const permission = yield* Permission.Service

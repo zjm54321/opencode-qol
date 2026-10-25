@@ -33,7 +33,7 @@ let
     };
 
     export default {
-      id: "gpt-taste",
+      id: "opencode.qol.gpt-taste",
       async setup(ctx) {
         const registrations = await Promise.all(
           ["context", "compaction", "generate"].map((name) => ctx.session.hook(name, append)),

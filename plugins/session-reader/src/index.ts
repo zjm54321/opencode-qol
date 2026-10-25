@@ -38,7 +38,7 @@ function diffMetadata(sessionID: string, diffs: FileDiff[]) {
 }
 
 export default Plugin.define({
-  id: "session-reader",
+  id: "opencode.qol.session-reader",
   async setup(ctx) {
     const client = new OpenCodeClient();
     const standaloneDiff = "No file diffs available for this session in standalone mode.";

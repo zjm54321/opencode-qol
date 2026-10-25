@@ -23,7 +23,7 @@ export default {
     const pending = new Set<string>()
     ctx.keymap.layer(() => ({
       mode: "global",
-      // Palette shortcut only: the server command owns /clear-encrypted.
+      // Palette shortcut only: the server command owns /clear-encrypted-contents.
       commands: [{
         id,
         title: "Clear encrypted reasoning content in current session",

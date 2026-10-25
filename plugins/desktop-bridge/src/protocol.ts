@@ -1,6 +1,6 @@
 import { normalizeOrigin, type BillionOrigin } from "./billion-origin.ts";
 
-export const PLUGIN_ID = "opencode.desktop-bridge";
+export const PLUGIN_ID = "opencode.qol.desktop-bridge";
 export type HelloInput = { protocolVersions: number[] };
 export type HelloOutput =
   | { protocolVersion: 1; capabilities: ["billion.origin.v1", "model.favorites.v1"] }

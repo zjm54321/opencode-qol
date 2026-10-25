@@ -6,7 +6,7 @@ import { executeNanoBananaImageGen } from "./nanobanana.js";
 import { conversationImagePaths, imageFailure } from "./images.js";
 
 export default Plugin.define({
-  id: "opencode-imagegen",
+  id: "opencode.qol.image",
   async setup(ctx) {
     loadConfiguration(undefined, ctx.location.directory);
 

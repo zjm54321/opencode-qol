@@ -226,15 +226,6 @@ export async function setupServer(ctx: ServerContext, deps: Dependencies = { tar
         await clear({ sessionID: input.sessionID })
       },
     })
-    editor.add({
-      name: "clear-encrypted",
-      description: "Clear encrypted reasoning content from the current session while preserving chat history",
-      async execute(input) {
-        if (input.prompt.text.trim() || input.prompt.files?.length || input.prompt.agents?.length || input.prompt.skills?.length)
-          throw new Error(reasons.arguments)
-        await clear({ sessionID: input.sessionID })
-      },
-    })
   })
 }
 

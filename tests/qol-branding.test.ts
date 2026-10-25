@@ -1,6 +1,6 @@
 // Focused checks for patches/qol-branding.patch and assets/branding.
 // The patched packages/tui/src/logo.ts is reconstructed from its full-file hunk,
-// so the version helpers and edition placement run without the upstream tree.
+// so the version helpers run without the upstream tree.
 // Set OPENCODE_QOL_UPSTREAM=<official source> to also dry-run the patch against it.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -15,8 +15,6 @@ const PATCH = path.join(ROOT, "patches/qol-branding.patch");
 type LogoModule = {
   logo: { left: string[]; right: string[] };
   go: { left: string[]; right: string[] };
-  edition: string;
-  qol: string[];
   qolVersion: (version: string) => string;
   qolVersionLabel: (version: string) => string;
 };
@@ -95,36 +93,13 @@ describe("display version", () => {
   });
 });
 
-describe("edition mark", () => {
-  test("is the three lowercase letters qol", () => {
-    expect(mod.edition).toBe("qol");
-  });
-
-  test("qol is a matching mini block font sitting on the bottom baseline", () => {
-    expect(Array.isArray(mod.qol)).toBe(true);
-    expect(mod.qol.length).toBe(4);
-    for (const row of mod.qol) {
-      expect(typeof row).toBe("string");
-      expect(row.length).toBe(11);
-    }
-    expect(mod.qol[0].trim()).toBe("");
-    expect(mod.qol[1].trim()).toBe("");
-    expect(mod.qol[2]).toContain("▛▀▜");
-    expect(mod.qol[3]).toContain("▀▀▌");
-  });
-
-  test("component centers opencode dead-center with position: absolute for qol", () => {
-    const component = added("packages/tui/src/component/logo.tsx").join("\n");
-    expect(component).toContain("export function Logo(props: { edition?: boolean })");
-    expect(component).toContain('<box position="relative">');
-    expect(component).toContain('position="absolute"');
-    expect(component).toContain('left="100%"');
-  });
-
-  test("wordmark glyphs are unchanged; only home opts in", () => {
+describe("official logo", () => {
+  test("leaves the wordmark, component and home route unchanged", () => {
     const body = sections(patch).get("packages/tui/src/logo.ts")!.join("\n");
     expect(body).not.toMatch(/^-(?!-- a\/)/m);
-    expect(added("packages/tui/src/routes/home.tsx")).toEqual(["          <Logo edition />"]);
+    expect(Object.keys(mod).sort()).toEqual(["go", "logo", "qolVersion", "qolVersionLabel"].sort());
+    expect(sections(patch).has("packages/tui/src/component/logo.tsx")).toBe(false);
+    expect(sections(patch).has("packages/tui/src/routes/home.tsx")).toBe(false);
     expect(sections(patch).has("packages/tui/src/feature-plugins/system/stats.tsx")).toBe(false);
   });
 });
@@ -135,11 +110,9 @@ describe("patch scope", () => {
       [
         "packages/cli/src/index.ts",
         "packages/tui/src/component/dialog-debug.tsx",
-        "packages/tui/src/component/logo.tsx",
         "packages/tui/src/feature-plugins/home/footer.tsx",
         "packages/tui/src/logo.ts",
         "packages/tui/src/mini/splash.ts",
-        "packages/tui/src/routes/home.tsx",
       ].sort(),
     );
     const tools = sections(await readFile(path.join(ROOT, "patches/tui-qol-tools.patch"), "utf8"));
@@ -163,19 +136,28 @@ describe("branding assets", () => {
     return { width: view.getUint32(16), height: view.getUint32(20), colorType: bytes[25] };
   }
 
-  test("dark and light Sunburst logo PNGs exist and have valid RGBA geometry", async () => {
+  test("official dark and light SVGs are rendered at 6x with RGBA transparency", async () => {
     const dark = await ihdr("opencode-qol-logo-dark.png");
     expect(dark.colorType).toBe(6);
-    expect(dark.width).toBeGreaterThan(500);
-    expect(dark.height).toBeGreaterThan(100);
+    expect(dark.width).toBe(1404);
+    expect(dark.height).toBe(252);
 
     const light = await ihdr("opencode-qol-logo-light.png");
     expect(light.colorType).toBe(6);
-    expect(light.width).toBeGreaterThan(500);
-    expect(light.height).toBeGreaterThan(100);
+    expect(light.width).toBe(1404);
+    expect(light.height).toBe(252);
 
     const def = await ihdr("opencode-qol-logo.png");
-    expect(def.colorType).toBe(6);
+    expect(def).toEqual(dark);
+    expect(await readFile(path.join(ROOT, "assets/branding/opencode-qol-logo.png"))).toEqual(
+      await readFile(path.join(ROOT, "assets/branding/opencode-qol-logo-dark.png")),
+    );
+
+    for (const theme of ["dark", "light"]) {
+      const svg = await readFile(path.join(ROOT, `assets/branding/opencode-qol-logo-${theme}.svg`), "utf8");
+      expect(svg).toContain('width="234" height="42" viewBox="0 0 234 42"');
+      expect(svg).not.toMatch(/qol/i);
+    }
 
     expect(existsSync(path.join(ROOT, "assets/branding/SOURCE.md"))).toBe(true);
   });

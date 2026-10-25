@@ -1,12 +1,10 @@
 # Image API quick reference
 
-This file is for the fallback CLI mode only. Use it only after the user explicitly asks to use `scripts/image_gen.py` instead of the built-in `image_gen` tool.
-
-These parameters describe the Image API and bundled CLI fallback surface. Do not assume they are normal arguments on the built-in `image_gen` tool.
+Adapted from OpenAI's imagegen reference. These are underlying API details, not instructions to run an SDK or shell command. Call the direct built-in `image_gen` tool; its schema defines the supported arguments.
 
 ## Scope
-- This fallback CLI is intended for GPT Image models (`gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`).
-- The built-in `image_gen` tool and the fallback CLI do not expose the same controls.
+- Historical GPT Image API controls below describe `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`; use configured presets for newer models.
+- The built-in tool exposes only a subset of API controls.
 
 ## Endpoints
 - Generate: `POST /v1/images/generations` (`client.images.generate(...)`)
@@ -34,7 +32,7 @@ Model-specific note for `input_fidelity`:
 
 ## Output
 - `data[]` list with `b64_json` per image
-- The bundled `scripts/image_gen.py` CLI decodes `b64_json` and writes output files for you.
+- The built-in tool decodes `b64_json`, saves workspace files and returns Markdown links and count/file metadata.
 
 ## Limits and notes
 - Input images and masks must be under 50MB.
@@ -45,5 +43,5 @@ Model-specific note for `input_fidelity`:
 - If a request fails because a specific option is unsupported by the selected GPT Image model, retry manually without that option.
 
 ## Important boundary
-- `quality`, `input_fidelity`, explicit masks, `background`, `output_format`, and related parameters are fallback-only execution controls.
-- Do not assume they are built-in `image_gen` tool arguments.
+- The tool accepts `quality`, maps `aspect_ratio` to size, and maps `transparent_background` to API transparency controls.
+- `n`, `input_fidelity`, explicit masks, raw `background`, `output_format` and output paths are not built-in tool arguments. Do not use a shell workaround.

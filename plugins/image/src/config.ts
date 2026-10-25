@@ -38,8 +38,9 @@ function readJsonFile(filePath: string): Record<string, any> {
     const value = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a JSON object");
     return value;
-  } catch (error) {
-    throw new Error(`Invalid image generation configuration at ${filePath}: ${String(error)}`);
+  } catch {
+    // JSON parse errors may quote the document, including embedded provider credentials.
+    throw new Error(`Invalid image generation configuration at ${filePath}: expected a valid JSON object.`);
   }
 }
 

@@ -1,6 +1,9 @@
 {
   "autoUpdate": false,
   "advisoryCheck": false,
+  "storage": {
+    "sqliteAutoDownload": false
+  },
   "providers": {},
   "compress": {
     "nudgeGrowthTokens": 300000

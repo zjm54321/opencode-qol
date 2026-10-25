@@ -1,3 +1,7 @@
 Generated package version: 0.0.0
-Prompt excerpts: NB-Corp/gpt-with-taste, commit 27e7da1, MIT.
-Upstream license: https://github.com/NB-Corp/gpt-with-taste/blob/27e7da1/LICENSE
+Prompt excerpts: NB-Corp/gpt-with-taste, commit 079fb262b4d7932515ba4e6341fd57b6f2122f4a, MIT.
+Adaptation: recipe/main.md and recipe/sub.md remain adapted prompt excerpts, not the upstream Pi plugin.
+Verification: both upstream recipe files are byte-identical to commit 27e7da1; prompt content unchanged.
+Original recipe/main.md SHA-256: 1c729382ef92a6df5f5a4c7f78045d56b091bc8ab533ad3400edf06cea227f0a
+Original recipe/sub.md SHA-256: cb27d93a14f2826bffb275bbc1fd793e9687cb96e30c59388f0872903289e87b
+Upstream license: https://github.com/NB-Corp/gpt-with-taste/blob/079fb262b4d7932515ba4e6341fd57b6f2122f4a/LICENSE

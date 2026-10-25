@@ -4,6 +4,12 @@ import {
   formatSystemReminder,
 } from '../config/constants';
 import { escapeRegExp } from './agent-variant';
+import {
+  getPersistedBackgroundChild,
+  type PersistedBackgroundChild,
+  recordPersistedBackgroundChild,
+  restorePersistedBackgroundChild,
+} from './background-job-persistence';
 import type { BackgroundJobStore } from './background-job-store';
 import {
   clearBackgroundJobSuppression,
@@ -41,11 +47,6 @@ export interface BackgroundJobLease {
   token: string;
   kind: BackgroundJobLeaseKind;
   terminalRevision?: number;
-}
-
-export interface BackgroundJobPromptMetadata {
-  text: string | undefined;
-  terminalUnreconciledTaskIDs: BackgroundJobExecution[];
 }
 
 /** Metadata for an accessible reusable session selected from the sidebar. */
@@ -108,6 +109,8 @@ export interface BackgroundJobRecord {
   verifiedRetainedRound?: true;
   /** Recovery has not sent a prompt; importing a row does not own host work. */
   recoveredWithoutPrompt?: true;
+  /** In-memory only: adopted by the startup scan from persisted host state. */
+  recoveredAtStartup?: true;
   /**
    * In-memory provenance: this plugin's own tracked native task call launched
    * this record as a fresh background child. Never set for adopted, restored,
@@ -289,19 +292,6 @@ const CANONICAL_TERMINAL_STATES = new Set<TaskOutputState>([
   'cancelled',
 ]);
 
-/**
- * Unconfirmable-runtime age after which a running job leaves the board
- * render (#1314). No existing stale/TTL constant family fits this scale.
- */
-export const STATUS_UNCERTAIN_DEMOTE_AFTER_MS = 30 * 60_000;
-
-/**
- * Render-only discoverability window (store survives for reconciler/revive;
- * only real retrieval via markUsed refreshes it, rendering never does).
- * Different layer than STATUS_UNCERTAIN_DEMOTE_AFTER_MS (lifecycle grace).
- */
-export const AGED_ENTRY_RENDER_TTL_MS = 6 * 60 * 60_000;
-
 const AGENT_PREFIX: Record<string, string> = {
   council: 'cou',
   designer: 'des',
@@ -319,6 +309,11 @@ function aliasPrefixForAgent(agent: string): string {
 export class BackgroundJobBoard implements BackgroundJobStore {
   private terminalGate?: BackgroundJobTerminalGate;
   private readonly jobs = new Map<string, BackgroundJobRecord>();
+  /** Persisted identity overwritten by a launch that may still be refused. */
+  private readonly launchPersistenceSnapshots = new WeakMap<
+    BackgroundJobRecord,
+    PersistedBackgroundChild | undefined
+  >();
   /** One live operation/relaunch owner per native session ID. */
   private readonly liveLeases = new Map<string, BackgroundJobLease>();
   private readonly counters = new Map<string, number>();
@@ -478,6 +473,7 @@ export class BackgroundJobBoard implements BackgroundJobStore {
             : {}),
         } satisfies BackgroundJobRecord;
         this.setJob(observed);
+        this.persistBackgroundChild(observed, { preserveDelivered: true });
         return observed;
       }
 
@@ -517,12 +513,42 @@ export class BackgroundJobBoard implements BackgroundJobStore {
         timeoutCount: existing.timeoutCount ?? 0,
       } satisfies BackgroundJobRecord;
       this.setJob(updated);
+      this.persistBackgroundChild(updated, {});
       return updated;
     }
 
     const record = this.createLaunchRecord(input, now, generation);
     this.setJob(record);
+    this.persistBackgroundChild(record, {});
     return record;
+  }
+
+  private persistBackgroundChild(
+    record: BackgroundJobRecord,
+    options: { preserveDelivered?: boolean },
+  ): void {
+    if (!record.background || record.state !== 'running') return;
+    // Capture what this write replaces. A refused relaunch restores it,
+    // including its delivered marker, instead of leaving the rejected
+    // launch as a phantom persisted run.
+    this.launchPersistenceSnapshots.set(
+      record,
+      getPersistedBackgroundChild(record.taskID),
+    );
+    recordPersistedBackgroundChild(
+      {
+        taskID: record.taskID,
+        parentSessionID: record.parentSessionID,
+        agent: record.agent,
+        description: record.description,
+        ...(record.objective !== undefined
+          ? { objective: record.objective }
+          : {}),
+        launchedAt: record.runStartedAt,
+        background: true,
+      },
+      { preserveDelivered: options.preserveDelivered === true },
+    );
   }
 
   abandonLaunch(
@@ -536,6 +562,13 @@ export class BackgroundJobBoard implements BackgroundJobStore {
       return false;
     }
     this.setJob(replaced);
+    if (this.launchPersistenceSnapshots.has(launched)) {
+      restorePersistedBackgroundChild(
+        launched.taskID,
+        this.launchPersistenceSnapshots.get(launched),
+      );
+      this.launchPersistenceSnapshots.delete(launched);
+    }
     return true;
   }
 
@@ -787,6 +820,11 @@ export class BackgroundJobBoard implements BackgroundJobStore {
       ...existing,
       state: 'running',
       updatedAt: now,
+      launchedAt: existing.state === 'running' ? existing.launchedAt : now,
+      // A terminal/reconciled row observed live again is a genuinely new
+      // execution: the per-run fence must move with it. Repeated busy
+      // observations of an in-flight run keep the existing fence.
+      runStartedAt: existing.state === 'running' ? existing.runStartedAt : now,
       lastLiveBusyAt: now,
       activityRevision: existing.activityRevision + 1,
       stopConfirmationStartedAt: undefined,
@@ -806,6 +844,12 @@ export class BackgroundJobBoard implements BackgroundJobStore {
     };
 
     this.setJob(updated);
+    if (existing.state !== 'running') {
+      // A self-continued or directly prompted child starts a new live run.
+      // Clear the prior terminal delivery marker; passive observations must
+      // keep it so a completed child cannot replay a wake after restart.
+      this.persistBackgroundChild(updated, {});
+    }
     return updated;
   }
 
@@ -1493,112 +1537,6 @@ export class BackgroundJobBoard implements BackgroundJobStore {
     return byParent;
   }
 
-  formatForPromptWithMetadata(
-    parentSessionID: string,
-    now = Date.now(),
-  ): BackgroundJobPromptMetadata | undefined {
-    // Keep placeholders resolvable, but out of every operational section
-    // and the corresponding terminal-consumption metadata.
-    const jobs = this.list(parentSessionID).filter(
-      (job) => job.provisional !== true,
-    );
-    // Long-unconfirmable running jobs leave the render (#1314); the store
-    // record survives and a real terminal publication returns the entry.
-    const isStaleUncertain = (job: BackgroundJobRecord) =>
-      job.state === 'running' &&
-      job.statusUncertain &&
-      now - (job.statusUncertainSince ?? job.updatedAt) >=
-        STATUS_UNCERTAIN_DEMOTE_AFTER_MS;
-    const active = jobs.filter(
-      (job) =>
-        (job.state === 'running' || job.terminalUnreconciled) &&
-        !isStaleUncertain(job),
-    );
-    // Aged ballast leaves the render (#1314 family). Applied only to
-    // reusable/retained below — the active filter's exemption is structural.
-    const isRenderAgedOut = (job: BackgroundJobRecord) =>
-      now - job.lastUsedAt >= AGED_ENTRY_RENDER_TTL_MS;
-    // listReusable predates the provisional provenance contract and is
-    // unaware of it: without this filter a reconciled completed
-    // placeholder would surface in the Reusable Sessions section even
-    // though it was never attributed (same exclusion as `jobs` above).
-    const reusable = this.listReusable(parentSessionID).filter(
-      (job) => job.provisional !== true && !isRenderAgedOut(job),
-    );
-    const retained = jobs.filter(
-      (job) => isRetainedStopped(job) && !isRenderAgedOut(job),
-    );
-    const acknowledgedFailedSession = reusable.some((job) => {
-      const terminal = job.terminalState ?? terminalStateOf(job.state);
-      return terminal === 'cancelled' || terminal === 'error';
-    });
-
-    if (active.length === 0 && reusable.length === 0 && retained.length === 0) {
-      return undefined;
-    }
-
-    const text = formatSystemReminder(
-      [
-        '### Background Job Board',
-        'SENTINEL: background-job-board-v2',
-        ...(acknowledgedFailedSession
-          ? [
-              'Acknowledged terminal sessions are reusable by alias for the same specialist/context.',
-            ]
-          : [
-              'Completed or reconciled sessions are reusable by alias for the same specialist/context.',
-            ]),
-        'Timed-out running sessions are recoverable by alias for safe resume after a live busy signal.',
-        ...(acknowledgedFailedSession
-          ? [
-              'Active, uncertain, or unacknowledged terminal sessions are not reusable.',
-            ]
-          : ['Cancelled or errored sessions are not reusable.']),
-        ...(this.delegationTool === 'task'
-          ? [
-              'Continue an existing session with task_revive even when it is not listed here. A result read is not required before task_revive.',
-            ]
-          : [
-              'Completed sessions continue with subagent() by exact session id even when they are not listed. Cancelled, errored, and stopped sessions use task_revive.',
-            ]),
-        ...(retained.length > 0
-          ? [
-              `Stopped sessions without a terminal result are retained for task_revive, not ${this.delegationTool}().`,
-            ]
-          : []),
-        '',
-        '#### Active / Unreconciled',
-        ...(active.length > 0 ? active.map(formatJob) : ['- none']),
-        '',
-        '#### Reusable Sessions',
-        ...(reusable.length > 0
-          ? reusable.map((job) => this.formatReusableJob(job))
-          : ['- none']),
-        ...(retained.length > 0
-          ? [
-              '',
-              '#### Retained / Recovery',
-              ...retained.map((job) => this.formatRetainedJob(job)),
-            ]
-          : []),
-      ].join('\n'),
-    );
-
-    const terminalUnreconciledTaskIDs = active
-      .filter((job) => job.terminalUnreconciled)
-      .map(({ taskID, generation, terminalRevision }) => ({
-        taskID,
-        generation,
-        terminalRevision,
-      }));
-
-    return { text, terminalUnreconciledTaskIDs };
-  }
-
-  formatForPrompt(parentSessionID: string, now?: number): string | undefined {
-    return this.formatForPromptWithMetadata(parentSessionID, now)?.text;
-  }
-
   clearParent(parentSessionID: string): void {
     // A deleted parent's life ends; a restored copy (export/import emits no
     // session.created) carries numbers this board never issued.
@@ -1716,33 +1654,52 @@ export class BackgroundJobBoard implements BackgroundJobStore {
     }
   }
 
-  private formatReusableJob(job: BackgroundJobRecord): string {
-    const terminal = job.terminalState ?? terminalStateOf(job.state);
-    const reconciliation = job.terminalUnreconciled
-      ? 'unreconciled'
-      : 'reconciled';
-    const lines = [
-      `- ${promptSafe(job.alias)} / ${promptSafe(job.taskID)} / ${promptSafe(job.agent)} / ${promptSafe(terminal ?? job.state)}, ${reconciliation}`,
-      `  Objective: ${promptSafe(job.description || job.objective || '')}`,
-    ];
-    const context = formatContextFiles(job.contextFiles);
-    if (context) lines.push(`  Context read by ${job.alias}: ${context}`);
-    return lines.join('\n');
-  }
-
-  private formatRetainedJob(job: BackgroundJobRecord): string {
-    const lines = [
-      `- ${promptSafe(job.alias)} / ${promptSafe(job.taskID)} / ${promptSafe(job.agent)} / stopped, ${REVIVE_ONLY}`,
-      `  Objective: ${promptSafe(job.description || job.objective || '')}`,
-      ...(this.delegationTool === 'task'
-        ? []
-        : [
-            `  Recovery: no terminal result; recoverable with task_revive, not ${this.delegationTool}()`,
-          ]),
-    ];
-    const context = formatContextFiles(job.contextFiles);
-    if (context) lines.push(`  Context read by ${job.alias}: ${context}`);
-    return lines.join('\n');
+  /**
+   * Correct a running row that startup recovery had adopted before the
+   * child was verified terminal. The caller owns publication; this method
+   * deliberately fires no terminal listener so a restart cannot double
+   * wake the parent.
+   */
+  correctStartupRecoveredTerminal(input: {
+    taskID: string;
+    generation: number;
+    state: 'completed' | 'error' | 'cancelled' | 'stopped';
+    resultSummary?: string;
+    now?: number;
+  }): BackgroundJobRecord | undefined {
+    const existing = this.jobs.get(input.taskID);
+    if (
+      existing?.state !== 'running' ||
+      existing.generation !== input.generation ||
+      existing.externalOrigin !== true
+    ) {
+      return existing;
+    }
+    const now = input.now ?? Date.now();
+    const updated: BackgroundJobRecord = {
+      ...existing,
+      state: input.state,
+      terminalUnreconciled: true,
+      terminalRevision:
+        input.state === 'stopped'
+          ? existing.terminalRevision
+          : existing.terminalRevision + 1,
+      updatedAt: now,
+      completedAt: existing.completedAt ?? now,
+      terminalState: input.state === 'stopped' ? undefined : input.state,
+      ...(input.resultSummary !== undefined
+        ? { resultSummary: input.resultSummary }
+        : {}),
+      statusUncertain: false,
+      statusUncertainSince: undefined,
+      lastStatusError: undefined,
+      verifiedRetainedRound: true,
+      recoveredAtStartup: true,
+    };
+    // Startup delivery marks the identity after its wake callback so a
+    // failed callback can be retried on the next restart.
+    this.setJob(updated);
+    return updated;
   }
 
   /**
@@ -1954,63 +1911,12 @@ function isCanonicalTerminalState(
   return CANONICAL_TERMINAL_STATES.has(state as TaskOutputState);
 }
 
-function formatContextFiles(files: ContextFile[]): string {
-  const shown = files.slice(0, DEFAULT_CONTEXT_FILE_CAP);
-  const rest = files.length - shown.length;
-  const rendered = shown.map((file) => promptSafe(file.path));
-  return `${rendered.join(', ')}${rest > 0 ? ` (+${rest} more)` : ''}`;
-}
-
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
 function timeoutSummary(state: TaskOutputState): string {
   return `Background task exceeded its wall-clock deadline; abort was observed with child state ${state}.`;
-}
-
-const REVIVE_ONLY = 'task_revive only';
-
-function formatJob(job: BackgroundJobRecord): string {
-  const isResume = job.lastLaunchedAt !== job.launchedAt;
-  // Exclude wall-clock age labels so prompts remain stable between job-state transitions for cache reuse.
-  const displayState =
-    job.state === 'running' && isResume ? 'running [resumed]' : job.state;
-  const status = job.terminalUnreconciled
-    ? `${job.state}, unreconciled${
-        job.deadlineExceededAt !== undefined ? ', timed out' : ''
-      }`
-    : job.statusUncertain
-      ? `${job.state}${job.timedOut ? ', timed out' : ''}, status uncertain`
-      : job.timedOut
-        ? `${job.state}, timed out`
-        : displayState;
-  const lines = [
-    `- ${promptSafe(job.alias)} / ${promptSafe(job.taskID)} / ${promptSafe(job.agent)} / ${promptSafe(job.state === 'stopped' ? `${status}, ${REVIVE_ONLY}` : status)}`,
-    `  Objective: ${promptSafe(job.description || job.objective || '')}`,
-  ];
-
-  if (job.resultSummary && job.terminalUnreconciled) {
-    lines.push(`  Result: ${promptSafe(job.resultSummary)}`);
-  } else if (job.lastStatusError && job.statusUncertain) {
-    lines.push(`  Status: ${promptSafe(job.lastStatusError)}`);
-  }
-
-  return lines.join('\n');
-}
-
-function singleLine(value: string): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= 160) return normalized;
-  return `${normalized.slice(0, 157)}...`;
-}
-
-function promptSafe(value: string): string {
-  return singleLine(value)
-    .replaceAll('\\', '/')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 function normalizeCancelReason(reason?: string): string {

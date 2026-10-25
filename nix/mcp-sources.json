@@ -1,0 +1,24 @@
+{
+  "nixpkgs": {
+    "type": "github",
+    "owner": "NixOS",
+    "repo": "nixpkgs",
+    "rev": "02c087f3fe673c9e317f206a627cb6b910336dbe",
+    "narHash": "sha256-IoNisKcGbUjdd45qCqywGMCYmZ5EnkxezvLII0FWwNA="
+  },
+  "codegraph": {
+    "repository": "https://github.com/colbymchenry/codegraph",
+    "version": "1.6.2",
+    "license": "MIT",
+    "licenseSource": {
+      "url": "https://raw.githubusercontent.com/colbymchenry/codegraph/v1.6.2/LICENSE",
+      "hash": "sha256-5tmPmMZmvr4GWsJJKgoZIyzDGNTWe6w8pC/7d7rMiAk="
+    }
+  },
+  "nixos": {
+    "repository": "https://github.com/utensils/mcp-nixos",
+    "version": "3.0.1",
+    "license": "MIT",
+    "sourceHash": "sha256-S6elg+nneCdUwpG6Y9ABMr/bbRfzCvls0ba2Vva22Lk="
+  }
+}

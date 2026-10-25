@@ -3,7 +3,7 @@
  *
  * Compile-time assertions binding the hand-mirrored v2 plugin context in
  * `./types.ts` to the official `@opencode/plugin` types (pinned to the
- * audited version in devDependencies; baseline `2.0.18`). Enforcement
+ * audited version in devDependencies; baseline `2.1.2`). Enforcement
  * point is `bun run typecheck`: this file must NOT carry a test suffix,
  * because tsconfig excludes test-suffixed files (`*.test.ts`) from tsc —
  * a test-suffixed guard silently checks nothing.
@@ -31,18 +31,83 @@
  * referenced from docs/opencode-v2-compatibility.md instead.
  */
 
+import type { RpcCallOptions } from '@opencode/client';
+import type { EventDomain } from '@opencode/plugin/promise/event';
 import type { PermissionDomain } from '@opencode/plugin/promise/permission';
+import type { RpcDomain, RpcHandlers } from '@opencode/plugin/promise/rpc';
 import type {
   SessionDomain,
   SessionHooks,
 } from '@opencode/plugin/promise/session';
-import type { V2Context, V2PermissionRule } from './types';
+import type { Rpc } from '@opencode/plugin/rpc';
+import type { V2PresetRpcCallOptions } from './preset-manager';
+import type { sessionPresetRpc } from './preset-rpc';
+import type {
+  V2Context,
+  V2PermissionRule,
+  V2SessionPresetRpcHandlers,
+} from './types';
 
 type Expect<T extends true> = T;
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
     ? true
     : false;
+
+/** The deliberately narrow RPC mirror supports only our portable Zod
+ * contract. Keep handler inference, cancellation and client location options
+ * pinned to the official 2.1.2 API without exporting its dev-only types. */
+type PresetRpc = typeof sessionPresetRpc;
+type _presetRpcPortable = Expect<
+  PresetRpc extends Rpc.PortableDefinition ? true : false
+>;
+type _presetRpcNoEvents = Expect<Equal<keyof PresetRpc['events'], never>>;
+type _presetRpcNoErrors = Expect<
+  Equal<
+    {
+      [K in keyof PresetRpc['methods']]: 'errors' extends keyof PresetRpc['methods'][K]
+        ? true
+        : false;
+    }[keyof PresetRpc['methods']],
+    false
+  >
+>;
+type _rpcRegistrationCompatible = Expect<
+  RpcDomain extends NonNullable<V2Context['rpc']> ? true : false
+>;
+type _rpcHandlerInputs = Expect<
+  Equal<
+    {
+      [K in keyof PresetRpc['methods']]: Parameters<
+        V2SessionPresetRpcHandlers[K]
+      >[0];
+    },
+    {
+      [K in keyof PresetRpc['methods']]: Parameters<
+        RpcHandlers<PresetRpc>[K]
+      >[0];
+    }
+  >
+>;
+type _rpcHandlerOutputs = Expect<
+  Equal<
+    {
+      [K in keyof PresetRpc['methods']]: ReturnType<
+        V2SessionPresetRpcHandlers[K]
+      >;
+    },
+    { [K in keyof PresetRpc['methods']]: ReturnType<RpcHandlers<PresetRpc>[K]> }
+  >
+>;
+type _rpcHandlerSignal = Expect<
+  Equal<
+    Parameters<V2SessionPresetRpcHandlers['apply']>[1],
+    Pick<Parameters<RpcHandlers<PresetRpc>['apply']>[1], 'signal'>
+  >
+>;
+type _rpcCallOptions = Expect<
+  Equal<V2PresetRpcCallOptions, Pick<RpcCallOptions, 'location' | 'signal'>>
+>;
 
 /** Official session hook surface as of the pinned @opencode/plugin.
  * `experimental.ws.send`/`receive` were added upstream in 2.0.6 (#49136);
@@ -193,6 +258,63 @@ type _waitMirrorInput = Expect<
 >;
 type _sessionWaitCompletion = Expect<
   Equal<ReturnType<SessionDomain['wait']>, Promise<void>>
+>;
+
+/** Only the filters actually consumed by OMO are mirrored, not the complete
+ * host listing API. Continuation cursors retain the initial filter set. */
+type ListInput = NonNullable<Parameters<SessionDomain['list']>[0]>;
+type MirrorListInput = Parameters<NonNullable<V2Context['session']['list']>>[0];
+type _listInputFields = Expect<
+  Equal<Readonly<MirrorListInput>, Pick<ListInput, keyof MirrorListInput>>
+>;
+type ListOutput = Awaited<ReturnType<SessionDomain['list']>>;
+type _listOutputPage = Expect<
+  ListOutput extends { data: Array<{ id: string }>; cursor: object }
+    ? true
+    : false
+>;
+type _listNullableContinuation = Expect<
+  Equal<ListOutput['cursor']['next'], string | null | undefined>
+>;
+
+type HostEvent =
+  ReturnType<EventDomain['subscribe']> extends AsyncIterable<infer E>
+    ? E
+    : never;
+type ExecutionEvent = Extract<
+  HostEvent,
+  { type: `session.execution.${string}` }
+>;
+type _executionEnvelope = Expect<
+  ExecutionEvent extends {
+    id: string;
+    created: number;
+    data: { sessionID: string };
+  }
+    ? true
+    : false
+>;
+type _shutdownIsSuspended = Expect<
+  Equal<
+    Extract<
+      HostEvent,
+      { type: 'session.execution.interrupted' }
+    >['data']['reason'],
+    'user' | 'shutdown' | 'superseded' | 'inactivity'
+  >
+>;
+type CompactionResult = NonNullable<SessionHooks['compaction']['result']>;
+type _nativeCompactionResult = Expect<
+  'native' | 'metadata' | 'tokens' extends keyof CompactionResult ? true : false
+>;
+type _removedCompactionReplayNames = Expect<
+  Equal<
+    Extract<
+      keyof CompactionResult,
+      'providerState' | 'providerContext' | 'recent'
+    >,
+    never
+  >
 >;
 type _waitMirrorCompletion = Expect<
   Equal<

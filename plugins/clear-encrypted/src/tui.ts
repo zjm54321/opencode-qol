@@ -4,7 +4,7 @@ import { definition, id, reasons, safeReason, type ClearResult } from "./rpc"
 type Location = { directory: string; workspaceID?: string }
 export interface TuiContext {
   app: { version: string }
-  keymap: { layer(factory: () => { mode: "global"; commands: { id: string; title: string; palette: true; slash: { name: string; arguments: true }; run(input?: string): Promise<void> }[] }): void }
+  keymap: { layer(factory: () => { mode: "global"; commands: { id: string; title: string; palette: true; run(input?: string): Promise<void> }[] }): void }
   ui: {
     router: { current(): { type: string; sessionID?: string } }
     toast: { show(input: { message: string; variant: "info" | "success" | "error"; sessionID?: string }): void }
@@ -23,14 +23,13 @@ export default {
     const pending = new Set<string>()
     ctx.keymap.layer(() => ({
       mode: "global",
-      // ALWAYS registered: disabling it could let typed slash text reach the model.
+      // Palette shortcut only: the server command owns /clear-encrypted.
       commands: [{
         id,
         title: "清理当前会话的加密推理上下文",
         palette: true,
-        slash: { name: id, arguments: true },
         async run(input?: string) {
-          // Missing operational APIs must not prevent registration/consume of this slash.
+          // Missing operational APIs must not prevent registration of the shortcut.
           // Without toast there is no safe UI reporting channel; reject with fixed text.
           if (typeof ctx.ui?.toast?.show !== "function") throw new Error(reasons.compatibility)
           if (typeof ctx.ui?.router?.current !== "function" || typeof ctx.data?.session?.get !== "function"

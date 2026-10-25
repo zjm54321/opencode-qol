@@ -28,6 +28,15 @@ function formatDiff(diffs: FileDiff[]): string {
   }).join("\n\n"), 24_000);
 }
 
+function diffMetadata(sessionID: string, diffs: FileDiff[]) {
+  return {
+    sessionID,
+    files: diffs.length,
+    ...(diffs.every(diff => typeof diff.additions === "number") ? { additions: diffs.reduce((sum, diff) => sum + diff.additions!, 0) } : {}),
+    ...(diffs.every(diff => typeof diff.deletions === "number") ? { deletions: diffs.reduce((sum, diff) => sum + diff.deletions!, 0) } : {}),
+  };
+}
+
 export default Plugin.define({
   id: "session-reader",
   async setup(ctx) {
@@ -35,6 +44,7 @@ export default Plugin.define({
     const registration = await ctx.tool.transform(editor => {
       editor.add({
         name: "session_list",
+        options: { codemode: false },
         description: "Discover OpenCode sessions, with title search and opaque pagination. Defaults to this directory; search or all=true searches across directories. Explicit directory overrides that scope.",
         input: z.object({
           search: z.string().optional(),
@@ -44,14 +54,14 @@ export default Plugin.define({
           order: order.optional(),
           cursor: z.string().optional(),
         }),
-        async execute(input) {
+        async execute(input, execution) {
           const result = await client.listSessions({
             search: input.search,
             directory: input.directory ?? (input.all || input.search !== undefined ? undefined : ctx.location.directory),
             limit: input.limit ?? 20,
             order: input.cursor ? undefined : (input.order ?? "desc"),
             cursor: input.cursor,
-          });
+          }, execution.signal);
           const sessions = result.data.map(session => ({
             id: session.id,
             title: session.title,
@@ -59,12 +69,13 @@ export default Plugin.define({
             parentID: session.parentID,
             updated: session.time?.updated,
           }));
-          return { content: `${JSON.stringify(sessions, null, 2)}${pagination(result.cursor)}`, metadata: { cursor: result.cursor } };
+          return { content: `${JSON.stringify(sessions, null, 2)}${pagination(result.cursor)}`, metadata: { count: sessions.length, search: input.search, cursor: result.cursor } };
         },
       });
 
       editor.add({
         name: "session_read",
+        options: { codemode: false },
         description: "Read compact session turns without raw tool payloads. summary reads active context (last 12 messages); recent reads newest messages chronologically; slice pages history in the requested order; diff reads file changes. Use returned cursors for more history.",
         input: z.object({
           sessionID,
@@ -74,15 +85,18 @@ export default Plugin.define({
           order: order.optional(),
           type: z.string().optional().describe("Optional message type filter for recent/slice."),
         }),
-        async execute(input) {
-          if (input.mode === "diff") return { content: formatDiff((await client.getSessionDiff(input)).data) };
-          const session = (await client.getSession(input.sessionID)).data;
+        async execute(input, execution) {
+          if (input.mode === "diff") {
+            const diffs = (await client.getSessionDiff(input, execution.signal)).data;
+            return { content: formatDiff(diffs), metadata: { ...diffMetadata(input.sessionID, diffs), mode: "diff", count: diffs.length } };
+          }
+          const session = (await client.getSession(input.sessionID, execution.signal)).data;
           if (input.mode === "summary") {
-            const context = (await client.getSessionContext(input.sessionID)).data;
+            const context = (await client.getSessionContext(input.sessionID, execution.signal)).data;
             const count = input.limit ?? 12;
             const messages = context.slice(-count);
             const omitted = context.length > count ? `\n\nShowing the last ${messages.length} of ${context.length} active-context messages.` : "";
-            return { content: `${sessionHeader(session)}${omitted}\n\n${dehydrate(messages) || "No conversation messages."}` };
+            return { content: `${sessionHeader(session)}${omitted}\n\n${dehydrate(messages) || "No conversation messages."}`, metadata: { sessionID: input.sessionID, title: session.title, mode: input.mode, count: messages.length } };
           }
           const requestedOrder = input.cursor ? undefined : (input.mode === "recent" ? "desc" : input.order ?? "asc");
           const result = await client.getSessionMessages({
@@ -91,7 +105,7 @@ export default Plugin.define({
             order: requestedOrder,
             cursor: input.cursor,
             type: input.type,
-          });
+          }, execution.signal);
           // Pages retain API ordering; reverse descending pages for prompt-led turn parsing.
           let descending = input.mode === "recent" || input.order === "desc";
           if (input.cursor) {
@@ -104,18 +118,20 @@ export default Plugin.define({
           const messages = descending ? [...result.data].reverse() : result.data;
           return {
             content: `${sessionHeader(session)}\n\n${dehydrate(messages) || "No conversation messages."}${pagination(result.cursor)}`,
-            metadata: { cursor: result.cursor },
+            metadata: { sessionID: input.sessionID, title: session.title, mode: input.mode, count: messages.length, cursor: result.cursor },
           };
         },
       });
 
       editor.add({
         name: "session_diff",
+        options: { codemode: false },
         description: "Read a session's file changes (before/after content, bounded to 24,000 characters). Optionally select a single file.",
         input: z.object({ sessionID, file: z.string().optional() }),
-        async execute(input) {
-          const diffs = (await client.getSessionDiff(input)).data;
-          return { content: formatDiff(input.file === undefined ? diffs : diffs.filter(diff => diff.file === input.file)) };
+        async execute(input, execution) {
+          const diffs = (await client.getSessionDiff(input, execution.signal)).data;
+          const selected = input.file === undefined ? diffs : diffs.filter(diff => diff.file === input.file);
+          return { content: formatDiff(selected), metadata: diffMetadata(input.sessionID, selected) };
         },
       });
     });

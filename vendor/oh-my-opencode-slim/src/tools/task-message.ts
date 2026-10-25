@@ -9,18 +9,24 @@ import {
 } from '../hooks/task-session-manager/continuation-model-selection';
 import { pluginDisposedMessage } from '../hooks/task-session-manager/session-recovery';
 import type { BackgroundJobStore } from '../utils/background-job-store';
-import { fetchChildTranscript } from '../utils/child-transcript';
 import { isRecord } from '../utils/guards';
 import { getClient } from '../utils/opencode-client';
 import { OperationTimeoutError, withTimeout } from '../utils/session';
-import { type DelegationWording, delegationWording } from '../v2/delegation';
+import {
+  type DelegationWording,
+  delegationWording,
+  V2_RESUME_CALL,
+  v2ResumeCall,
+} from '../v2/delegation';
 import {
   type CanonicalTaskResolver,
   idParamFor,
   readTaskRef,
+  recentTaskHandles,
   resolveTaskRecord,
   taskRefArgs,
   unknownTaskRefError,
+  withRecentTaskHandles,
 } from './task-ref';
 
 const z = tool.schema;
@@ -42,10 +48,6 @@ export function createTaskMessageTool(options: {
   input: PluginInput;
   backgroundJobBoard: BackgroundJobStore;
   messageTimeoutMs?: number;
-  promptMessageIDFor?: (
-    taskID: string,
-    generation: number,
-  ) => string | undefined;
   resolveCanonicalTaskRef?: CanonicalTaskResolver;
   isDisposed?: () => boolean;
 }): Record<'task_message', ToolDefinition> {
@@ -63,21 +65,10 @@ export function createTaskMessageTool(options: {
         .min(1)
         .max(MAX_MESSAGE_LENGTH)
         .describe(
-          `Bounded message (max ${MAX_MESSAGE_LENGTH} chars) for the child task; for longer handoffs, continue the session with task_revive once it settles`,
+          hostFlavorAtCreation === 'v2'
+            ? `Bounded message (max ${MAX_MESSAGE_LENGTH} chars) for the child task; for longer handoffs, continue the session with ${V2_RESUME_CALL} once it settles`
+            : `Bounded message (max ${MAX_MESSAGE_LENGTH} chars) for the child task; for longer handoffs, continue the session with task_revive once it settles`,
         ),
-      ...(hostFlavorAtCreation === 'v2'
-        ? {
-            delivery: z
-              .enum(['queue', 'steer'])
-              .optional()
-              .describe(
-                'queue (default) waits for the child to go idle; ' +
-                  'steer is admitted for the next supported step ' +
-                  'boundary of the current run without launching, ' +
-                  'resuming, or interrupting it',
-              ),
-          }
-        : {}),
     },
     async execute(args, toolContext) {
       const parentSessionID = toolContext?.sessionID;
@@ -90,7 +81,13 @@ export function createTaskMessageTool(options: {
       if (!requested) throw new Error(`task_message requires ${idParam}`);
       const ref = await resolveTaskRecord(options, parentSessionID, requested);
       if (ref.kind === 'disposed') throw new Error(pluginDisposedMessage());
-      if (ref.kind === 'refused') throw new Error(ref.reason);
+      if (ref.kind === 'refused')
+        throw new Error(
+          withRecentTaskHandles(
+            ref.reason,
+            recentTaskHandles(options.backgroundJobBoard, parentSessionID),
+          ),
+        );
       // The await above resumes in a later microtask; a disposal queued in
       // that gap must still stop the send path (the helper's disposed
       // check ran before the gap).
@@ -103,7 +100,12 @@ export function createTaskMessageTool(options: {
         throw new Error(`Unknown task ID or alias: ${identity}`);
       }
       if (!job) {
-        throw unknownTaskRefError(identity, delegation.resumeParam);
+        throw unknownTaskRefError(
+          identity,
+          delegation.resumeParam,
+          recentTaskHandles(options.backgroundJobBoard, parentSessionID),
+          hostFlavor,
+        );
       }
 
       const currentJob = getCurrentTaskMessageJob(
@@ -126,14 +128,18 @@ export function createTaskMessageTool(options: {
 
       let keepLeaseUntilSettled = false;
       try {
-        assertMessageLease(options.backgroundJobBoard, lease, requested);
-        getCurrentTaskMessageJob(
-          options.backgroundJobBoard,
-          parentSessionID,
-          lease.taskID,
-          lease.generation,
-          delegation,
-        );
+        const assertCurrentMessage = () => {
+          assertMessageLease(options.backgroundJobBoard, lease, requested);
+          if (options.isDisposed?.()) throw new Error(pluginDisposedMessage());
+          return getCurrentTaskMessageJob(
+            options.backgroundJobBoard,
+            parentSessionID,
+            lease.taskID,
+            lease.generation,
+            delegation,
+          );
+        };
+        assertCurrentMessage();
 
         const session = getClient(options.input).session;
         const prompt = session.prompt.bind(session);
@@ -142,47 +148,6 @@ export function createTaskMessageTool(options: {
           options.messageTimeoutMs ?? DEFAULT_MESSAGE_TIMEOUT_MS,
         );
         const deadline = Date.now() + messageTimeoutMs;
-        if (hostFlavor === 'v2' && args.delivery === 'steer') {
-          const promptMessageID = options.promptMessageIDFor?.(
-            lease.taskID,
-            lease.generation,
-          );
-          if (promptMessageID) {
-            // A running board generation may still be queued behind an old
-            // host execution. Admission alone does not make it steerable.
-            const controller = new AbortController();
-            try {
-              const response = await withTimeout(
-                fetchChildTranscript(
-                  getClient(options.input),
-                  lease.taskID,
-                  options.input.directory,
-                  undefined,
-                  controller.signal,
-                ),
-                messageTimeoutMs,
-                'Task steering continuation lookup timed out; no message was sent',
-              );
-              if (
-                !isRecord(response) ||
-                !Array.isArray(response.data) ||
-                !response.data.some(
-                  (entry) =>
-                    isRecord(entry) &&
-                    isRecord(entry.info) &&
-                    entry.info.id === promptMessageID &&
-                    entry.info.role === 'user',
-                )
-              ) {
-                throw new Error(
-                  `Task ${requested} has an unconfirmed queued continuation; no steering message was sent. Use task_status to inspect it before retrying.`,
-                );
-              }
-            } finally {
-              controller.abort();
-            }
-          }
-        }
         let modelSelection: ContinuationModelSelection | undefined;
         // v2 prompts inherit persisted session selection; per-call overrides
         // cannot be represented atomically. Keep the v1 lookup/pin unchanged.
@@ -221,35 +186,37 @@ export function createTaskMessageTool(options: {
           options.backgroundJobBoard,
           lease,
           () => {
-            assertMessageLease(options.backgroundJobBoard, lease, requested);
-            if (options.isDisposed?.())
-              throw new Error(pluginDisposedMessage());
-            const currentJob = getCurrentTaskMessageJob(
-              options.backgroundJobBoard,
-              parentSessionID,
-              lease.taskID,
-              lease.generation,
-              delegation,
-            );
+            const currentJob = assertCurrentMessage();
+            const expectedAgent = currentJob.agent;
             const body = {
+              agent: expectedAgent,
               ...(modelSelection
                 ? {
-                    agent: currentJob.agent,
                     model: modelSelection.model,
                     variant: modelSelection.variant ?? 'default',
                   }
                 : {}),
               noReply: true,
-              ...(hostFlavor === 'v2' &&
-              (args as { delivery?: string }).delivery === 'steer'
-                ? { delivery: 'steer' as const }
-                : {}),
               parts: [{ type: 'text', text: args.message.trim() }],
             } as Parameters<typeof prompt>[0]['body'];
             return prompt({
               path: { id: lease.taskID },
               body,
               throwOnError: true,
+              ...(hostFlavor === 'v2'
+                ? {
+                    // The shim awaits owning-agent validation. Recheck the
+                    // same authorization at its final, synchronous admission
+                    // boundary rather than after the host has already queued.
+                    beforeSend: () => {
+                      if (assertCurrentMessage().agent !== expectedAgent) {
+                        throw new Error(
+                          `Task ${requested} agent changed while preparing its message; refusing stale message`,
+                        );
+                      }
+                    },
+                  }
+                : {}),
             });
           },
           remainingTimeoutMs,
@@ -264,17 +231,6 @@ export function createTaskMessageTool(options: {
           lease.generation,
           delegation,
         );
-        if (
-          hostFlavor === 'v2' &&
-          (args as { delivery?: string }).delivery === 'steer'
-        ) {
-          return (
-            `Message accepted for steering ${latestJob.alias} ` +
-            `(${latestJob.taskID}) at the next supported step boundary; ` +
-            `it was not launched or resumed and consumption is ` +
-            `not confirmed.`
-          );
-        }
         return `Message queued for ${latestJob.alias} (${latestJob.taskID}) without launching or resuming it.`;
       } catch (error) {
         keepLeaseUntilSettled =
@@ -437,7 +393,11 @@ function getCurrentTaskMessageJob(
   if (current.state !== 'running') {
     if (current.state === 'stopped') {
       throw new Error(
-        `Task ${expectedTaskID} stopped without a terminal result. task_message only queues messages for running tasks and does not continue it. Use task_revive with ${delegation.resumeParam}: "${expectedTaskID}" to continue the retained session.`,
+        `Task ${expectedTaskID} stopped without a terminal result. task_message only queues messages for running tasks and does not continue it. ${
+          delegation.tool === 'subagent'
+            ? `Continue the retained session with ${v2ResumeCall(expectedTaskID)}.`
+            : `Use task_revive with ${delegation.resumeParam}: "${expectedTaskID}" to continue the retained session.`
+        }`,
       );
     }
     const terminalState =
@@ -446,7 +406,11 @@ function getCurrentTaskMessageJob(
         : current.state;
     if (['completed', 'error', 'cancelled'].includes(terminalState)) {
       throw new Error(
-        `Task ${expectedTaskID} is terminal (${terminalState}). task_message only queues messages for running tasks and does not continue it. Continue that same session with task_revive and ${delegation.resumeParam}: "${expectedTaskID}".`,
+        `Task ${expectedTaskID} is terminal (${terminalState}). task_message only queues messages for running tasks and does not continue it. ${
+          delegation.tool === 'subagent'
+            ? `Continue that same session with ${v2ResumeCall(expectedTaskID)}.`
+            : `Continue that same session with task_revive and ${delegation.resumeParam}: "${expectedTaskID}".`
+        }`,
       );
     }
     throw new Error(

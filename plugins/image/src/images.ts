@@ -2,19 +2,45 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { Error as ToolError } from "@opencode/plugin/promise/tool";
 
 export const imageMimeTypes: Record<string, string> = {
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
 };
 
-export function errorResult(error_code: string, message: string, details = {}): string {
-  return JSON.stringify({ status: "error", error_code, message, ...details });
+export function errorResult(error_code: string, message: string, details = {}): never {
+  throw new ToolError({ message: JSON.stringify({ status: "error", error_code, message, ...details }), metadata: { error_code, ...details } });
+}
+
+export function imageFailure(error: unknown, signal?: AbortSignal, apiKey?: string): never {
+  if (signal?.aborted) throw signal.reason;
+  const message = error instanceof Error ? error.message : String(error);
+  const clean = apiKey ? message.replaceAll(apiKey, "[redacted]") : message;
+  if (error instanceof ToolError) throw new ToolError({ message: clean, metadata: error.metadata });
+  return errorResult("EXECUTION_EXCEPTION", clean);
+}
+
+export interface ImageResult {
+  content: string;
+  metadata: { count: number; model: string; aspect_ratio: string; edited: boolean; files: string[] };
+}
+
+export function imageResult(files: string[], model: string, aspect_ratio: string, edited: boolean): ImageResult {
+  return { content: files.map(preview).join("\n\n"), metadata: { count: files.length, model, aspect_ratio, edited, files } };
+}
+
+function withinWorkspace(absolute: string, workspace: string): void {
+  const relative = path.relative(workspace, absolute);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Image path must remain inside the workspace.");
+  }
 }
 
 export async function readImage(imagePath: string, workspaceDir: string) {
   const inline = imagePath.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z\d+/=\s]+)$/);
   if (inline) return { bytes: Buffer.from(inline[2], "base64"), mimeType: inline[1], name: "conversation-image" };
   const absolute = path.resolve(workspaceDir, imagePath);
+  withinWorkspace(await fs.realpath(absolute), await fs.realpath(workspaceDir));
   const mimeType = imageMimeTypes[path.extname(absolute).toLowerCase()];
   if (!mimeType) throw new Error(`Unsupported reference image format: ${imagePath}`);
   return { bytes: await fs.readFile(absolute), mimeType, name: path.basename(absolute) };
@@ -27,7 +53,14 @@ export async function saveImage(workspaceDir: string, engine: "openai" | "nano",
   if (!bytes.length) throw new Error("Empty image data");
   const relative = `.opencode/generated-images/${engine}/img-${crypto.randomUUID()}${ext}`;
   const absolute = path.resolve(workspaceDir, relative);
-  await fs.mkdir(path.dirname(absolute), { recursive: true });
+  const workspace = await fs.realpath(workspaceDir);
+  // Check each existing/created directory before descending through it (including symlinks).
+  let directory = workspace;
+  for (const segment of path.dirname(relative).split(path.sep)) {
+    directory = path.join(directory, segment);
+    await fs.mkdir(directory).catch(error => { if (error.code !== "EEXIST") throw error; });
+    withinWorkspace(await fs.realpath(directory), workspace);
+  }
   await fs.writeFile(absolute, bytes);
   return relative;
 }

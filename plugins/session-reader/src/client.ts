@@ -117,25 +117,25 @@ export class OpenCodeClient {
     this.fetcher = options.fetch ?? globalThis.fetch;
   }
 
-  listSessions(opts: ListSessionsOptions = {}): Promise<Page<SessionInfo>> {
-    return this.get("/api/session", { ...opts });
+  listSessions(opts: ListSessionsOptions = {}, signal?: AbortSignal): Promise<Page<SessionInfo>> {
+    return this.get("/api/session", { ...opts }, signal);
   }
 
-  getSession(sessionID: string): Promise<Data<SessionInfo>> {
-    return this.get(this.sessionPath(sessionID));
+  getSession(sessionID: string, signal?: AbortSignal): Promise<Data<SessionInfo>> {
+    return this.get(this.sessionPath(sessionID), {}, signal);
   }
 
-  getSessionMessages(opts: SessionMessagesOptions): Promise<Page<SessionMessage>> {
+  getSessionMessages(opts: SessionMessagesOptions, signal?: AbortSignal): Promise<Page<SessionMessage>> {
     const { sessionID, ...query } = opts;
-    return this.get(`${this.sessionPath(sessionID)}/message`, query);
+    return this.get(`${this.sessionPath(sessionID)}/message`, query, signal);
   }
 
-  getSessionDiff(opts: { sessionID: string }): Promise<Data<FileDiff[]>> {
-    return this.get(`${this.sessionPath(opts.sessionID)}/diff`);
+  getSessionDiff(opts: { sessionID: string }, signal?: AbortSignal): Promise<Data<FileDiff[]>> {
+    return this.get(`${this.sessionPath(opts.sessionID)}/diff`, {}, signal);
   }
 
-  getSessionContext(sessionID: string): Promise<Data<SessionMessage[]>> {
-    return this.get(`${this.sessionPath(sessionID)}/context`);
+  getSessionContext(sessionID: string, signal?: AbortSignal): Promise<Data<SessionMessage[]>> {
+    return this.get(`${this.sessionPath(sessionID)}/context`, {}, signal);
   }
 
   private sessionPath(sessionID: string): string {
@@ -143,13 +143,15 @@ export class OpenCodeClient {
     return `/api/session/${encodeURIComponent(sessionID)}`;
   }
 
-  private async get<T>(path: string, query: Record<string, string | number | undefined> = {}): Promise<T> {
+  private async get<T>(path: string, query: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     // Reload on each request so a restarted service's port/password is picked up.
     const config = await readServiceConfig(this.options.configDirectory);
     const url = new URL(path, `http://127.0.0.1:${config.port}`);
     url.search = formatOptions(query).toString();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     const redact = (value: string) => {
       const authorization = Buffer.from(`opencode:${config.password}`).toString("base64");
       const clean = value.replaceAll(authorization, "[redacted]");
@@ -162,7 +164,7 @@ export class OpenCodeClient {
           Accept: "application/json",
           Authorization: `Basic ${Buffer.from(`opencode:${config.password}`).toString("base64")}`,
         },
-        signal: controller.signal,
+        signal: requestSignal,
         redirect: "error",
       });
       if (!response.ok) {
@@ -173,10 +175,11 @@ export class OpenCodeClient {
       try {
         return await response.json() as T;
       } catch (error) {
-        if (controller.signal.aborted) throw error;
+        if (requestSignal.aborted) throw error;
         throw new Error("The service returned invalid JSON.");
       }
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       if (controller.signal.aborted) throw new Error(`OpenCode GET ${path} timed out after ${this.timeoutMs}ms.`);
       throw new Error(`OpenCode GET ${path} failed: ${redact(error instanceof Error ? error.message : String(error))}`);
     } finally {

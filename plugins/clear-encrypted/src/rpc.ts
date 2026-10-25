@@ -38,6 +38,7 @@ export const definition = {
 
 // Never display raw subprocess, provider or RPC error strings (may contain secrets).
 export const reasons = {
+  arguments: "此命令不接受参数或附件",
   compatibility: "当前 OpenCode 缺少清理所需接口，请检查客户端和服务的插件兼容性",
   location: "无法确认当前会话所属位置",
   database: "无法确认服务实际使用的本地数据库",

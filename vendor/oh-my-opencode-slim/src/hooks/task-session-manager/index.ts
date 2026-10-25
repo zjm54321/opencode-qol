@@ -10,9 +10,12 @@ import {
   deriveTaskSessionLabel,
   getBackgroundJobLifecycleLedger,
   isInternalInitiatorPart,
+  isNativeBackgroundLaunchOutput,
   log,
+  markPersistedBackgroundChildDelivered,
   parseTaskIdFromTaskOutput,
   parseTaskStateFromOutput,
+  persistedBackgroundChildren,
   recordBackgroundJobSuppression,
 } from '../../utils';
 import {
@@ -36,12 +39,10 @@ import type { SessionLifecycle } from '../session-lifecycle';
 import { isMessageWithParts, isUserMessageWithParts } from '../types';
 import {
   BACKGROUND_JOB_BOARD_METADATA_KEY,
-  type InjectedTerminalJobs,
   type InjectionState,
   injectBackgroundJobBoard,
   observeSyntheticTerminalPart,
   pruneReopenCorrectionState,
-  reconcileInjectedTerminalJobs,
   stabilizeRunningTaskParts,
   updateFromInjectedCompletion,
 } from './board-injection';
@@ -51,6 +52,12 @@ import { handleEvent } from './event-router';
 import { createIdleReconciler } from './idle-reconciliation';
 import { createIdleSessionTokens } from './idle-session-tokens';
 import { createInputWaitTracker } from './input-wait-tracker';
+import { messageCreatedAt, parseNativeDelivery } from './native-delivery';
+import {
+  nativeDelegationToolName,
+  nativeToolCallID,
+  nativeToolResultText,
+} from './native-tool-parts';
 import {
   createPendingCallTracker,
   type PendingCallTracker,
@@ -100,6 +107,158 @@ function rehydrateHistoricalRunningTasks(
     managedSessionIDs.add(parentSessionID);
   }
 
+  const deliveryInHistory = (
+    parentSessionID: string,
+    taskID: string,
+    runStartedAt: number,
+  ): { state: 'completed' | 'error' | 'cancelled'; at: number } | undefined => {
+    let latest:
+      | { state: 'completed' | 'error' | 'cancelled'; at: number }
+      | undefined;
+    const cutoff = runStartedAt;
+    for (const message of messages) {
+      if (!isMessageWithParts(message)) continue;
+      if (
+        message.info.sessionID !== undefined &&
+        message.info.sessionID !== parentSessionID
+      ) {
+        continue;
+      }
+      const at = messageCreatedAt(message);
+      if (at === undefined || at < cutoff) continue;
+      if (latest !== undefined && at < latest.at) continue;
+      for (const part of message.parts) {
+        if (!isObjectRecord(part)) continue;
+        const delivery = parseNativeDelivery(
+          part as Parameters<typeof parseNativeDelivery>[0],
+        );
+        if (!delivery || delivery.taskID !== taskID) continue;
+        if (latest === undefined || at >= latest.at) {
+          latest = { state: delivery.state, at };
+        }
+      }
+    }
+    return latest;
+  };
+
+  const recoverTask = (
+    taskID: string,
+    parentSessionID: string,
+    input: Record<string, unknown>,
+    launchAt?: number,
+  ): void => {
+    if (rehydrateTombstones?.has(taskID)) {
+      // A real session.deleted already invalidated this run. Do not turn its
+      // persisted running tool part into a fresh alias on the next request.
+      return;
+    }
+    if (backgroundJobBoard.get(taskID)) return;
+    const persisted = persistedBackgroundChildren().get(taskID);
+    if (persisted && persisted.parentSessionID !== parentSessionID) {
+      // A child identity belongs only to the parent that launched it.
+      return;
+    }
+    if (persisted?.deliveredAt !== undefined) {
+      // A restart already delivered this child's terminal outcome. A stale
+      // running history part must not resurrect it as a fresh run.
+      return;
+    }
+    const runStartedAt = persisted?.launchedAt ?? launchAt;
+    if (runStartedAt !== undefined) {
+      const delivered = deliveryInHistory(
+        parentSessionID,
+        taskID,
+        runStartedAt,
+      );
+      if (delivered) {
+        // Trusted current-run delivery already reached the parent before the
+        // restart. Re-owning this stale running launch would replay it.
+        if (persisted) {
+          markPersistedBackgroundChildDelivered(
+            taskID,
+            delivered.at,
+            runStartedAt,
+          );
+        }
+        return;
+      }
+    }
+
+    const agentType = input.subagent_type ?? input.agent;
+    const agent =
+      typeof agentType === 'string' && agentType.trim() !== ''
+        ? agentType.trim()
+        : RECOVERED_TASK_AGENT_FALLBACK;
+    const description =
+      typeof input.description === 'string' ? input.description : undefined;
+    const prompt = typeof input.prompt === 'string' ? input.prompt : undefined;
+    const label = deriveTaskSessionLabel({
+      description,
+      prompt,
+      agentType: agent,
+    });
+
+    const adopted = backgroundJobBoard.registerLaunch({
+      taskID,
+      parentSessionID,
+      agent,
+      description: label,
+      objective: deriveFullObjective({ description, prompt }) ?? label,
+      background: true,
+      preserveRun: true,
+      adopted: true,
+      // Prefer the persisted launch fence. A transcript timestamp is the
+      // best remaining evidence; zero stays the last-resort marker when no
+      // trustworthy time exists.
+      now: runStartedAt ?? 0,
+    });
+    adopted.recoveredAtStartup = true;
+    // Re-claim the admission slot this still-running task already holds.
+    // The scheduler is recreated on every plugin re-init (the factory re-
+    // runs on config updates), so without this restore a fresh scheduler
+    // would admit a second concurrent task past the configured cap. The
+    // model resolution mirrors admission so provider/model caps stay
+    // correct. Idempotent per taskID.
+    backgroundTaskConcurrency?.restoreTask(
+      taskID,
+      getModelForAgent?.(agent, parentSessionID),
+    );
+    rehydrated.push(taskID);
+  };
+
+  // v2 context history reaches the transform as native tool-call/tool-result
+  // parts. Pair the call's input with the result's host-authored background
+  // launch sentence; the sentence, not input.background, proves the child
+  // actually runs in the background (omitted background defaults to native
+  // background, while a foreground call has no result until it completes).
+  const nativeCalls = new Map<
+    string,
+    {
+      parentSessionID: string;
+      input: Record<string, unknown>;
+      at?: number;
+    }
+  >();
+  const nativeCallKey = (parentSessionID: string, callID: string) =>
+    `${parentSessionID}\u0000${callID}`;
+  for (const message of messages) {
+    if (!isMessageWithParts(message)) continue;
+    const parentSessionID = message.info.sessionID;
+    if (!parentSessionID || !managedSessionIDs.has(parentSessionID)) continue;
+    for (const part of message.parts) {
+      if (!isObjectRecord(part) || part.type !== 'tool-call') continue;
+      const toolName = nativeDelegationToolName(part);
+      if (toolName !== 'task' && toolName !== 'subagent') continue;
+      const callID = nativeToolCallID(part);
+      if (!callID || !isObjectRecord(part.input)) continue;
+      nativeCalls.set(nativeCallKey(parentSessionID, callID), {
+        parentSessionID,
+        input: part.input,
+        at: messageCreatedAt(message),
+      });
+    }
+  }
+
   for (const message of messages) {
     if (!isMessageWithParts(message)) continue;
 
@@ -109,6 +268,32 @@ function rehydrateHistoricalRunningTasks(
     }
 
     for (const part of message.parts) {
+      if (!isObjectRecord(part)) continue;
+      if (part.type === 'tool-result') {
+        const toolName = nativeDelegationToolName(part);
+        if (toolName !== 'task' && toolName !== 'subagent') continue;
+        const callID = nativeToolCallID(part);
+        if (!callID) continue;
+        const call = nativeCalls.get(nativeCallKey(parentSessionID, callID));
+        if (!call) continue;
+        const output = nativeToolResultText(part);
+        if (!output || !isNativeBackgroundLaunchOutput(output)) continue;
+        const taskID = parseTaskIdFromTaskOutput(output);
+        if (!taskID || parseTaskStateFromOutput(output) !== 'running') {
+          continue;
+        }
+        const explicitID = call.input.task_id ?? call.input.sessionID;
+        if (
+          typeof explicitID === 'string' &&
+          explicitID !== '' &&
+          explicitID !== taskID
+        ) {
+          continue;
+        }
+        recoverTask(taskID, call.parentSessionID, call.input, call.at);
+        continue;
+      }
+
       if (part.type !== 'tool' || part.tool !== 'task') continue;
       if (!isObjectRecord(part.state)) continue;
 
@@ -122,55 +307,12 @@ function rehydrateHistoricalRunningTasks(
       if (!taskID || parseTaskStateFromOutput(state.output) !== 'running') {
         continue;
       }
-      if (rehydrateTombstones?.has(taskID)) {
-        // A real session.deleted already invalidated this run. Do not turn its
-        // persisted running tool part into a fresh alias on the next request.
-        continue;
-      }
-      if (backgroundJobBoard.get(taskID)) continue;
-
-      const agent =
-        typeof state.input.subagent_type === 'string' &&
-        state.input.subagent_type.trim() !== ''
-          ? state.input.subagent_type.trim()
-          : RECOVERED_TASK_AGENT_FALLBACK;
-      const description =
-        typeof state.input.description === 'string'
-          ? state.input.description
-          : undefined;
-      const prompt =
-        typeof state.input.prompt === 'string' ? state.input.prompt : undefined;
-      const label = deriveTaskSessionLabel({
-        description,
-        prompt,
-        agentType: agent,
-      });
-
-      backgroundJobBoard.registerLaunch({
+      recoverTask(
         taskID,
         parentSessionID,
-        agent,
-        description: label,
-        objective: deriveFullObjective({ description, prompt }) ?? label,
-        background: true,
-        preserveRun: true,
-        adopted: true,
-        // Historical parts do not carry a trustworthy launch timestamp. Zero
-        // also prevents this registration from looking like a live observation
-        // to the first runtime-status reconciliation.
-        now: 0,
-      });
-      // Re-claim the admission slot this still-running task already holds.
-      // The scheduler is recreated on every plugin re-init (the factory re-
-      // runs on config updates), so without this restore a fresh scheduler
-      // would admit a second concurrent task past the configured cap. The
-      // model resolution mirrors admission so provider/model caps stay
-      // correct. Idempotent per taskID.
-      backgroundTaskConcurrency?.restoreTask(
-        taskID,
-        getModelForAgent?.(agent, parentSessionID),
+        state.input,
+        messageCreatedAt(message),
       );
-      rehydrated.push(taskID);
     }
   }
 
@@ -186,6 +328,14 @@ export function createTaskSessionManagerHook(
     hostOutcomeClock?: 'shared-unix-ms';
     backgroundJobSupervisor?: BackgroundJobSupervisor;
     backgroundTaskConcurrency?: BackgroundTaskConcurrency;
+    /** Whether a completed-job push for this exact run is still queued and
+     *  undelivered in the wake scheduler; consulted by the stale-timestamp
+     *  retirement fallback so an undelivered answer is never acked first. */
+    hasUndeliveredTerminalPush?: (
+      parentSessionID: string,
+      taskID: string,
+      generation: number,
+    ) => boolean;
     /** Shared by plugin generations for one admission runtime. */
     pendingCallTracker?: PendingCallTracker;
     getModelForAgent?: (
@@ -201,10 +351,6 @@ export function createTaskSessionManagerHook(
     /** Host flavor marker ('v2' on OpenCode v2 hosts); selects the native
      *  delegation vocabulary in model-visible tool guidance. Defaults v1. */
     hostFlavor?: string;
-    /** v1-only honoured switch (runtime.backgroundJobs.boardInjection;
-     *  forced false on v2 at the RuntimeConfig layer). false on v1 =
-     *  boardless. */
-    boardInjection?: boolean;
     /** Per-instance pairing flag for the background-default flip (v2 only);
      *  see BackgroundDefaultFlipState in v2/delegation. */
     isBackgroundDefaultFlipArmed?: () => boolean;
@@ -473,11 +619,6 @@ export function createTaskSessionManagerHook(
     });
   const taskContextTracker = createTaskContextTracker();
 
-  const terminalJobsInjectedByParent = new Map<string, InjectedTerminalJobs>();
-  const pendingInjectedTerminalJobsByParent = new Map<
-    string,
-    Map<string, BackgroundJobExecution>
-  >();
   /** Sessions with a deferred failover error awaiting the fallback
    *  outcome (managed inline 401/410, or a background child's
    *  failover-worthy error with an armed fallback chain), mapped to the
@@ -502,8 +643,6 @@ export function createTaskSessionManagerHook(
 
   const idleReconciler = createIdleReconciler({
     terminalGate,
-    reconcileInjectedTerminalJobs: (parentSessionID: string) =>
-      reconcileInjectedTerminalJobs(injectionState, parentSessionID),
     idleReconcileDelayMs:
       options.idleReconcileDelayMs ?? IDLE_RECONCILE_DELAY_MS,
     isFallbackInProgress: options.isFallbackInProgress,
@@ -589,10 +728,7 @@ export function createTaskSessionManagerHook(
         backgroundJobBoard.clearParent(sessionId);
         if (!hardTimedOut) options.backgroundJobSupervisor?.drop(sessionId);
       }
-      terminalJobsInjectedByParent.delete(sessionId);
-      pendingInjectedTerminalJobsByParent.delete(sessionId);
       historyBoundaries.delete(sessionId);
-      injectionState.retainedTailBoards.delete(sessionId);
       // Orphaned reopen corrections must never surface in a recreated
       // session; the board entries they referenced are being dropped too.
       pruneReopenCorrectionState(injectionState, sessionId);
@@ -607,7 +743,6 @@ export function createTaskSessionManagerHook(
     backgroundJobBoard,
     terminalGate,
     hostFlavor: options.hostFlavor,
-    boardInjection: options.boardInjection !== false,
     lifecycleLedger: rehydrateState,
     processedInjectedCompletions: rehydrateState.processedInjectedCompletions,
     processedInjectedCompletionOrder:
@@ -618,13 +753,10 @@ export function createTaskSessionManagerHook(
       rehydrateState.syntheticTerminalOccurrenceOrder,
     getLifecycleEpoch: () => rehydrateState.nextEpoch,
     getDeletionEpoch: (taskID) => rehydrateState.deletionEpochs.get(taskID),
-    terminalJobsInjectedByParent,
-    pendingInjectedTerminalJobsByParent,
+    hasUndeliveredTerminalPush: options.hasUndeliveredTerminalPush,
     metadataKey: BACKGROUND_JOB_BOARD_METADATA_KEY,
     shouldManageSession: options.shouldManageSession,
     taskContextTracker,
-    lastInjectedBoardTextByParent: new Map(),
-    retainedTailBoards: new Map(),
   };
 
   // Early session.created registrations belong to the pending native call,
@@ -826,6 +958,11 @@ export function createTaskSessionManagerHook(
         }
 
         for (const [partIndex, part] of message.parts.entries()) {
+          // The host's native completion commits the terminal state. Its
+          // retirement is NOT observed here: on v1 the native delivery is
+          // untagged (the plugin cannot see it as one of its own deltas), so
+          // the run retires through the tagged-delta observation or the
+          // stale-terminal fallback (issue #1647).
           await updateFromInjectedCompletion(
             injectionState,
             part,
@@ -890,8 +1027,6 @@ export function createTaskSessionManagerHook(
         terminalGate,
         pendingCallTracker,
         taskContextTracker,
-        terminalJobsInjectedByParent,
-        pendingInjectedTerminalJobsByParent,
         backgroundJobSupervisor: options.backgroundJobSupervisor,
         bindConcurrencyTicket: (taskID, pending) =>
           pending.concurrencyTicket?.bind(taskID),

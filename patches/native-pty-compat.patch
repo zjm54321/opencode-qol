@@ -1,0 +1,150 @@
+diff --git a/packages/core/src/persistent-pty/daemon.ts b/packages/core/src/persistent-pty/daemon.ts
+index 21bcaab..5fe07a2 100644
+--- a/packages/core/src/persistent-pty/daemon.ts
++++ b/packages/core/src/persistent-pty/daemon.ts
+@@ -6,7 +6,7 @@ import { Cause, Data, Duration, Effect, Schema, Semaphore } from "effect"
+ import type { Handoff } from "@opencode/schema/persistent-pty"
+ import { Session } from "@opencode/schema/session"
+ 
+-const ProtocolVersion = 7
++const ProtocolVersion = 8
+ const MaxFrameBytes = 8 * 1024 * 1024
+ 
+ const Lifecycle = Schema.Union([
+@@ -16,6 +16,12 @@ const Lifecycle = Schema.Union([
+ ])
+ 
+ export const WireTerminal = Schema.Struct({
++  tool: Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown)),
++  created_at: Schema.Number,
++  exit_signal: Schema.NullOr(Schema.String),
++  killed: Schema.Boolean,
++  timed_out: Schema.Boolean,
++  termination_error: Schema.optionalKey(Schema.NullOr(Schema.String)),
+   id: Schema.Number,
+   pid: Schema.NullOr(Schema.Number),
+   title: Schema.String,
+@@ -41,6 +47,14 @@ const Registration = Schema.Struct({
+ type Registration = typeof Registration.Type
+ 
+ export const WireResponse = Schema.Union([
++  Schema.Struct({
++    type: Schema.Literal("replay"),
++    requested_offset: Schema.Number,
++    available_offset: Schema.Number,
++    end_offset: Schema.Number,
++    truncated: Schema.Boolean,
++    data_base64: Schema.String,
++  }),
+   Schema.Struct({
+     type: Schema.Literal("pong"),
+     instance_id: Schema.String,
+diff --git a/packages/core/src/persistent-pty/index.ts b/packages/core/src/persistent-pty/index.ts
+index 780880f..73a61d6 100644
+--- a/packages/core/src/persistent-pty/index.ts
++++ b/packages/core/src/persistent-pty/index.ts
+@@ -70,6 +70,7 @@ export interface Interface {
+       readonly env: Readonly<Record<string, string>>
+       readonly cols?: number
+       readonly rows?: number
++      readonly tool?: Readonly<Record<string, unknown>>
+     },
+   ) => Effect.Effect<Info, UnavailableError>
+   readonly write: (
+@@ -97,6 +98,8 @@ export interface Interface {
+     data: Uint8Array,
+   ) => Effect.Effect<void, NotFoundError | UnavailableError>
+   readonly snapshot: (id: Pty.ID) => Effect.Effect<Snapshot, NotFoundError | UnavailableError>
++  readonly replay: (id: Pty.ID, byteOffset?: number) => Effect.Effect<Attachment["replay"], NotFoundError | UnavailableError>
++  readonly stop: (id: Pty.ID) => Effect.Effect<void, NotFoundError | UnavailableError>
+   readonly read: (sessionID: Session.ID, lines?: number) => Effect.Effect<ReadResult | null, UnavailableError>
+   readonly remove: (id: Pty.ID) => Effect.Effect<void, NotFoundError | UnavailableError>
+   readonly shutdown: () => Effect.Effect<void, UnavailableError>
+@@ -170,6 +173,7 @@ const makeLayer = (options: Options = {}) =>
+             env: input.env,
+             cols: input.cols ?? 80,
+             rows: input.rows ?? 24,
++            tool: input.tool ?? null,
+           },
+           true,
+         )
+@@ -250,6 +254,25 @@ const makeLayer = (options: Options = {}) =>
+         return undefined
+       })
+ 
++      const replay = Effect.fn("PersistentPty.replay")(function* (id: Pty.ID, byteOffset = 0) {
++        yield* get(id)
++        const response = yield* request(daemon, { op: "replay", id: fromID(id), offset: byteOffset })
++        if (response.type !== "replay") return yield* unexpected(response)
++        return {
++          requestedOffset: response.requested_offset,
++          availableOffset: response.available_offset,
++          endOffset: response.end_offset,
++          truncated: response.truncated,
++          data: Buffer.from(response.data_base64, "base64"),
++        }
++      })
++
++      const stop = Effect.fn("PersistentPty.stop")(function* (id: Pty.ID) {
++        yield* get(id)
++        const response = yield* request(daemon, { op: "stop", id: fromID(id) })
++        if (response.type !== "ok") return yield* unexpected(response)
++      })
++
+       const snapshot = Effect.fn("PersistentPty.snapshot")(function* (id: Pty.ID) {
+         yield* get(id)
+         const response = yield* request(daemon, { op: "snapshot", id: fromID(id) })
+@@ -327,12 +350,12 @@ const makeLayer = (options: Options = {}) =>
+         id: Pty.ID,
+         input: Parameters<Interface["attach"]>[1],
+       ) {
+-        yield* get(id)
++        const terminal = yield* get(id)
+         const attachment = yield* daemon
+           .subscribe(fromID(id), {
+             ...input,
+             onEvent: (event) => {
+-              if (event.type === "exited") removeVisibleExit(id)
++              if (event.type === "exited" && terminal.tool?.retainOnExit !== true) removeVisibleExit(id)
+               input.onEvent(event)
+             },
+           })
+@@ -357,6 +380,8 @@ const makeLayer = (options: Options = {}) =>
+         control,
+         input,
+         snapshot,
++        replay,
++        stop,
+         read,
+         remove,
+         shutdown,
+@@ -401,6 +426,12 @@ function toInfo(value: WireTerminal): Info {
+       ...(status === "exited" ? { exitCode: value.lifecycle.exit_code ?? undefined } : {}),
+     }),
+     sessionID: value.group_id,
++    tool: value.tool,
++    createdAt: value.created_at,
++    exitSignal: value.exit_signal ?? undefined,
++    killed: value.killed,
++    timedOut: value.timed_out,
++    terminationError: value.termination_error ?? undefined,
+     foregroundProcess: value.foreground_process,
+     size: { cols: value.cols, rows: value.rows },
+     output: { head: value.output_head, tail: value.output_tail },
+diff --git a/packages/schema/src/persistent-pty.ts b/packages/schema/src/persistent-pty.ts
+index cef23f5..326a186 100644
+--- a/packages/schema/src/persistent-pty.ts
++++ b/packages/schema/src/persistent-pty.ts
+@@ -8,6 +8,12 @@ import { Session } from "./session.js"
+ 
+ export const Info = Schema.Struct({
+   ...Pty.Info.fields,
++  tool: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
++  createdAt: Schema.optionalKey(Schema.Number),
++  exitSignal: Schema.optionalKey(Schema.String),
++  killed: Schema.optionalKey(Schema.Boolean),
++  timedOut: Schema.optionalKey(Schema.Boolean),
++  terminationError: Schema.optionalKey(Schema.String),
+   sessionID: Session.ID,
+   foregroundProcess: Schema.NullOr(Schema.String),
+   size: Schema.Struct({ cols: PositiveInt, rows: PositiveInt }),

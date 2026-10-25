@@ -1,0 +1,467 @@
+diff --git a/packages/tui/src/mini/tool.ts b/packages/tui/src/mini/tool.ts
+--- a/packages/tui/src/mini/tool.ts
++++ b/packages/tui/src/mini/tool.ts
+@@ -26,6 +26,7 @@ import {
+   webSearchProviderLabel,
+ } from "../util/tool-display"
+ import { formatPath } from "../util/path-format"
++import { qolToolSubject, qolToolSummary } from "../util/qol-tool-display"
+ import { isRecord } from "../util/record"
+ import { parseTodos, todoMarker } from "../util/todo"
+ import type { RunEntryBody, StreamCommit, ToolSnapshot } from "./types"
+@@ -128,6 +129,11 @@ type ToolName =
+   | "webfetch"
+   | "websearch"
+   | "skill"
++  | "image_gen"
++  | "image_gen_nano"
++  | "session_list"
++  | "session_read"
++  | "session_diff"
+ 
+ type ToolRule = {
+   view: ToolView
+@@ -853,6 +859,60 @@ function scrollLspStart(p: ToolProps): string {
+   return `→ ${lspTitle(p.input, { directory: p.frame.directory })}`
+ }
+ 
++// OpenCode QoL: image and session-reader summaries shared with the session view.
++function qolSummary(p: ToolProps) {
++  return qolToolSummary({
++    tool: p.frame.name,
++    status: p.frame.status,
++    input: p.frame.input,
++    metadata: p.frame.meta,
++    output: p.frame.output,
++  })
++}
++
++function qolLines(p: ToolProps) {
++  return (qolSummary(p)?.lines ?? []).map((line) =>
++    line.startsWith("↳ Saved ") ? `↳ Saved ${displayPath(p, line.slice("↳ Saved ".length))}` : line,
++  )
++}
++
++function runQol(p: ToolProps): ToolInline {
++  const summary = qolSummary(p)
++  // `opencode run` appends " failed" itself for tool errors.
++  if (p.frame.status === "error") return { icon: summary?.icon ?? "⚙", title: qolToolSubject(p.frame.name) }
++  const lines = qolLines(p)
++  return {
++    icon: summary?.failed ? "✗" : (summary?.icon ?? "⚙"),
++    title: summary?.title ?? p.frame.name,
++    ...(lines.length > 0 && { description: lines.join("  ") }),
++  }
++}
++
++function scrollQolStart(p: ToolProps): string {
++  const summary = qolSummary(p)
++  return `${summary?.icon ?? "⚙"} ${summary?.title ?? p.frame.name}`
++}
++
++function scrollQolFinal(p: ToolProps): string {
++  if (p.frame.status === "error") return fail(p.frame)
++  const summary = qolSummary(p)
++  if (!summary) return fallbackFinal(p.frame)
++  const head = summary.failed ? `✖ ${summary.title}` : `${summary.icon} ${summary.title}`
++  return [head, ...qolLines(p).map((line) => `  ${line}`)].join("\n")
++}
++
++const QOL_RULE = {
++  view: {
++    output: false,
++    final: true,
++  },
++  run: runQol,
++  scroll: {
++    start: scrollQolStart,
++    final: scrollQolFinal,
++  },
++} satisfies ToolRule
++
+ function scrollSkillStart(p: ToolProps): string {
+   return `→ Skill "${p.metadata.name ?? p.input.id ?? ""}"`
+ }
+@@ -1100,6 +1160,11 @@ const TOOL_RULES = {
+       start: scrollSkillStart,
+     },
+   },
++  image_gen: QOL_RULE,
++  image_gen_nano: QOL_RULE,
++  session_list: QOL_RULE,
++  session_read: QOL_RULE,
++  session_diff: QOL_RULE,
+ } as const satisfies ToolRegistry
+ 
+ function key(name: string): name is ToolName {
+diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
+--- a/packages/tui/src/routes/session/index.tsx
++++ b/packages/tui/src/routes/session/index.tsx
+@@ -95,6 +95,7 @@ import { getScrollAcceleration } from "../../util/scroll"
+ import { collapseShellOutput, collapseToolOutput } from "../../util/collapse-tool-output"
+ import { Keymap, type KeymapCommand } from "../../context/keymap"
+ import { usePathFormatter } from "../../context/path-format"
++import { QOL_IMAGE_TOOLS, QOL_SESSION_TOOLS, qolToolSummary } from "../../util/qol-tool-display"
+ import { useLocation } from "../../context/location"
+ import { Slot } from "../../plugin/render"
+ import { usePlugin } from "../../plugin/context"
+@@ -2634,6 +2635,9 @@ function ToolPart(props: { part: SessionMessageAssistantTool; images?: boolean }
+       <Match when={display() === "skill"}>
+         <Skill {...toolprops} />
+       </Match>
++      <Match when={QOL_IMAGE_TOOLS.includes(display()) || QOL_SESSION_TOOLS.includes(display())}>
++        <QolTool {...toolprops} />
++      </Match>
+       <Match when={true}>
+         <GenericTool {...toolprops} />
+       </Match>
+@@ -3258,6 +3262,69 @@ function WebFetch(props: ToolProps) {
+   )
+ }
+ 
++// OpenCode QoL: dedicated rows for the built-in image and session-reader tools.
++function QolTool(props: ToolProps) {
++  const theme = useTheme()
++  const pathFormatter = usePathFormatter()
++  const [expanded, setExpanded] = createSignal(false)
++  const summary = createMemo(() =>
++    qolToolSummary({
++      tool: props.tool,
++      status: props.part.state.status,
++      input: props.input,
++      metadata: props.metadata,
++      output: props.output,
++    }),
++  )
++  const prompt = createMemo(() => stringValue(props.input.prompt))
++  const lines = createMemo(() =>
++    (summary()?.lines ?? []).map((line) =>
++      line.startsWith("↳ Saved ") ? `↳ Saved ${pathFormatter.format(line.slice("↳ Saved ".length))}` : line,
++    ),
++  )
++  return (
++    <>
++      <InlineTool
++        icon={summary()?.icon ?? "⚙"}
++        color={summary()?.failed ? theme.text.feedback.error.base : undefined}
++        spinner={summary()?.running}
++        pending={summary()?.title ?? props.tool}
++        complete={true}
++        part={props.part}
++        onClick={prompt() ? () => setExpanded((value) => !value) : undefined}
++      >
++        {summary()?.title ?? props.tool}
++      </InlineTool>
++      <For each={lines()}>
++        {(line) => (
++          <box paddingLeft={3}>
++            <text
++              paddingLeft={3}
++              wrapMode="none"
++              truncate
++              fg={summary()?.failed ? theme.text.feedback.error.base : theme.text.muted}
++            >
++              {line}
++            </text>
++          </box>
++        )}
++      </For>
++      <Show when={expanded() && prompt()}>
++        {(value) => (
++          <box paddingLeft={3 + INLINE_TOOL_ICON_WIDTH} flexDirection="row">
++            <text flexShrink={0} fg={theme.text.muted}>
++              prompt:{" "}
++            </text>
++            <text flexGrow={1} wrapMode="word" fg={theme.text.base}>
++              {value()}
++            </text>
++          </box>
++        )}
++      </Show>
++    </>
++  )
++}
++
+ function WebSearch(props: ToolProps) {
+   const ctx = use()
+   const provider = createMemo(() => stringValue(props.metadata.provider))
+diff --git a/packages/tui/src/routes/session/message-parts.tsx b/packages/tui/src/routes/session/message-parts.tsx
+--- a/packages/tui/src/routes/session/message-parts.tsx
++++ b/packages/tui/src/routes/session/message-parts.tsx
+@@ -15,6 +15,7 @@ import { Locale } from "../../util/locale"
+ import { use } from "./render-context"
+ import { generateThinkingSyntax } from "./thinking-syntax"
+ import { canonicalToolName } from "../../util/tool-display"
++import { QOL_TOOL_DISPLAYS } from "../../util/qol-tool-display"
+ 
+ export const INLINE_TOOL_ICON_WIDTH = 2
+ 
+@@ -33,6 +34,7 @@ const toolDisplays = new Set([
+   "todowrite",
+   "question",
+   "skill",
++  ...QOL_TOOL_DISPLAYS,
+ ])
+ 
+ export function toolDisplay(tool: string) {
+diff --git a/packages/tui/src/util/qol-tool-display.ts b/packages/tui/src/util/qol-tool-display.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/tui/src/util/qol-tool-display.ts
+@@ -0,0 +1,256 @@
++// OpenCode QoL: display summaries for the built-in image and session-reader tools.
++// Pure helpers shared by the session view and `opencode run`; keep this file free of imports.
++
++export const QOL_IMAGE_TOOLS: readonly string[] = ["image_gen", "image_gen_nano"]
++export const QOL_SESSION_TOOLS: readonly string[] = ["session_list", "session_read", "session_diff"]
++export const QOL_TOOL_DISPLAYS: readonly string[] = [...QOL_IMAGE_TOOLS, ...QOL_SESSION_TOOLS]
++
++export const QOL_IMAGE_ICON = "▣"
++export const QOL_READ_ICON = "→"
++export const QOL_SEARCH_ICON = "✱"
++
++const TITLE_WIDTH = 40
++const MODEL_WIDTH = 32
++const QUERY_WIDTH = 32
++const ERROR_WIDTH = 120
++const SAVED_LINES = 2
++
++export type QolToolSummary = {
++  icon: string
++  /** Main row text: spinner label while running, final summary afterwards. */
++  title: string
++  /** Supplementary rows, already prefixed with "↳ ". Paths stay raw so callers can format them. */
++  lines: string[]
++  /** The tool returned an error payload as normal content (legacy image results). */
++  failed: boolean
++  running: boolean
++}
++
++type Dict = Record<string, unknown>
++
++function record(value: unknown): Dict {
++  return value && typeof value === "object" && !Array.isArray(value) ? (value as Dict) : {}
++}
++
++function str(value: unknown): string | undefined {
++  return typeof value === "string" && value.trim() ? value.trim() : undefined
++}
++
++function count(value: unknown): number | undefined {
++  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined
++}
++
++function plural(n: number, word: string) {
++  return `${n} ${word}${n === 1 ? "" : "s"}`
++}
++
++function cellWidth(char: string) {
++  const code = char.codePointAt(0) ?? 0
++  if (code < 0x1100) return 1
++  if (
++    code <= 0x115f ||
++    (code >= 0x2e80 && code <= 0xa4cf) ||
++    (code >= 0xac00 && code <= 0xd7a3) ||
++    (code >= 0xf900 && code <= 0xfaff) ||
++    (code >= 0xfe30 && code <= 0xfe4f) ||
++    (code >= 0xff00 && code <= 0xff60) ||
++    (code >= 0xffe0 && code <= 0xffe6) ||
++    (code >= 0x1f300 && code <= 0x1faff) ||
++    (code >= 0x20000 && code <= 0x3fffd)
++  )
++    return 2
++  return 1
++}
++
++/** Collapses whitespace and truncates to a terminal cell budget with an ellipsis. */
++export function clipText(value: string, width: number) {
++  const text = value.replace(/\s+/g, " ").trim()
++  let used = 0
++  let out = ""
++  for (const char of text) {
++    const next = cellWidth(char)
++    if (used + next > width) return `${out.replace(/\s+$/, "")}…`
++    used += next
++    out += char
++  }
++  return out
++}
++
++function quoted(value: string, width: number) {
++  return `"${clipText(value, width)}"`
++}
++
++function joined(parts: readonly (string | undefined)[]) {
++  return parts.filter((part): part is string => Boolean(part)).join(" · ")
++}
++
++function settledStatus(status: string) {
++  return status !== "streaming" && status !== "running"
++}
++
++/** Legacy image results return `{"status":"error",...}` as normal content. */
++function imageErrorPayload(output: string) {
++  const text = output.trim()
++  if (!text.startsWith("{")) return
++  try {
++    const value = record(JSON.parse(text))
++    if (value.status !== "error") return
++    return { code: str(value.error_code), message: str(value.message) }
++  } catch {
++    return
++  }
++}
++
++function markdownImages(output: string) {
++  return Array.from(output.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g), (match) => match[1])
++}
++
++function savedLines(paths: readonly string[]) {
++  const lines = paths.slice(0, SAVED_LINES).map((file) => `↳ Saved ${file}`)
++  if (paths.length > SAVED_LINES) lines.push(`↳ +${paths.length - SAVED_LINES} more`)
++  return lines
++}
++
++export function qolImageSummary(input: {
++  tool: string
++  status: string
++  input: Dict
++  metadata: Dict
++  output?: string
++}): QolToolSummary {
++  const metadata = record(input.metadata)
++  const args = record(input.input)
++  const references = Array.isArray(args.referenced_image_paths) ? args.referenced_image_paths.length : 0
++  const recent = count(args.num_last_images_to_include) ?? 0
++  // The OpenAI tool switches to its edit endpoint with references; Nano Banana uses them for continuity.
++  const editing =
++    typeof metadata.edited === "boolean"
++      ? metadata.edited
++      : input.tool === "image_gen" && references + recent > 0
++  const model = str(metadata.model) ?? str(args.model)
++  const aspect = str(metadata.aspect_ratio) ?? str(args.aspect_ratio)
++  const modelLabel = model ? clipText(model, MODEL_WIDTH) : undefined
++  const base = { icon: QOL_IMAGE_ICON, lines: [] as string[], failed: false, running: false }
++
++  if (!settledStatus(input.status))
++    return { ...base, running: true, title: joined([`${editing ? "Editing" : "Generating"} image…`, modelLabel]) }
++
++  if (input.status === "error") return { ...base, title: joined([`Image ${editing ? "edit" : "generation"} failed`, modelLabel]) }
++
++  const output = input.output ?? ""
++  const payload = imageErrorPayload(output)
++  if (payload)
++    return {
++      ...base,
++      failed: true,
++      title: joined([`Image ${editing ? "edit" : "generation"} failed`, payload.code]),
++      lines: payload.message ? [`↳ ${clipText(payload.message, ERROR_WIDTH)}`] : [],
++    }
++
++  const legacy = markdownImages(output)
++  const files = Array.isArray(metadata.files)
++    ? metadata.files.filter((file): file is string => typeof file === "string" && file.length > 0)
++    : legacy
++  // Only report a count the tool actually returned: metadata first, then real markdown image links.
++  const total = count(metadata.count) ?? (legacy.length > 0 ? legacy.length : undefined)
++  if (total === undefined) return { ...base, title: joined(["Image request finished", modelLabel]) }
++  if (total === 0) return { ...base, title: joined(["No image returned", modelLabel]) }
++  return {
++    ...base,
++    title: joined([`${editing ? "Edited" : "Generated"} ${plural(total, "image")}`, modelLabel, aspect]),
++    lines: savedLines(files),
++  }
++}
++
++function sessionLabel(metadata: Dict, args: Dict, output: string) {
++  const title = str(metadata.title) ?? str(/^# (.+)$/m.exec(output.split("\n", 1)[0] ?? "")?.[1])
++  if (title) return quoted(title, TITLE_WIDTH)
++  const id = str(metadata.sessionID) ?? str(args.sessionID)
++  return id ? clipText(id, TITLE_WIDTH) : undefined
++}
++
++function diffStats(metadata: Dict) {
++  const files = count(metadata.files)
++  if (files === undefined) return
++  if (files === 0) return "no changes"
++  const additions = count(metadata.additions)
++  const deletions = count(metadata.deletions)
++  const lines = additions !== undefined && deletions !== undefined ? ` (+${additions}/-${deletions})` : ""
++  return `${plural(files, "file")}${lines}`
++}
++
++export function qolSessionSummary(input: {
++  tool: string
++  status: string
++  input: Dict
++  metadata: Dict
++  output?: string
++}): QolToolSummary {
++  const metadata = record(input.metadata)
++  const args = record(input.input)
++  const output = input.output ?? ""
++  const running = !settledStatus(input.status)
++  const failed = input.status === "error"
++  const base = { lines: [] as string[], failed: false, running }
++
++  if (input.tool === "session_list") {
++    const search = str(metadata.search) ?? str(args.search)
++    const query = search ? quoted(search, QUERY_WIDTH) : undefined
++    const icon = QOL_SEARCH_ICON
++    if (running) return { ...base, icon, title: query ? `Searching sessions ${query}…` : "Listing sessions…" }
++    if (failed) return { ...base, icon, title: query ? `Couldn't search sessions ${query}` : "Couldn't list sessions" }
++    const total = count(metadata.count)
++    const more = str(record(metadata.cursor).next) ? "more available" : undefined
++    if (total === undefined) return { ...base, icon, title: query ? `Searched sessions ${query}` : "Listed sessions" }
++    return {
++      ...base,
++      icon,
++      title: joined([
++        query ? `Found ${plural(total, "session")} matching ${query}` : `Listed ${plural(total, "session")}`,
++        more,
++      ]),
++    }
++  }
++
++  const label = sessionLabel(metadata, args, output)
++  const mode = str(metadata.mode) ?? str(args.mode) ?? "summary"
++  const diff = input.tool === "session_diff" || mode === "diff"
++  const icon = QOL_READ_ICON
++  if (diff) {
++    if (running) return { ...base, icon, title: "Reading session diff…" }
++    if (failed) return { ...base, icon, title: joined(["Couldn't read session diff", label]) }
++    return { ...base, icon, title: joined(["Read session diff", label, diffStats(metadata)]) }
++  }
++
++  const verb = mode === "recent" ? "recent messages" : mode === "slice" ? "session history" : "session"
++  if (running) return { ...base, icon, title: `Reading ${verb}…` }
++  if (failed) return { ...base, icon, title: joined([`Couldn't read ${verb}`, label]) }
++  const total = count(metadata.count)
++  const more = str(record(metadata.cursor).next) ? "more available" : undefined
++  return {
++    ...base,
++    icon,
++    title: joined([`Read ${verb}`, label, total === undefined ? undefined : plural(total, "message"), more]),
++  }
++}
++
++export function qolToolSummary(input: {
++  tool: string
++  status: string
++  input: Dict
++  metadata: Dict
++  output?: string
++}): QolToolSummary | undefined {
++  if (QOL_IMAGE_TOOLS.includes(input.tool)) return qolImageSummary(input)
++  if (QOL_SESSION_TOOLS.includes(input.tool)) return qolSessionSummary(input)
++  return undefined
++}
++
++/** Neutral subject for callers that add their own outcome wording, such as "… failed". */
++export function qolToolSubject(tool: string) {
++  if (QOL_IMAGE_TOOLS.includes(tool)) return "Image generation"
++  if (tool === "session_list") return "Session list"
++  if (tool === "session_diff") return "Session diff"
++  if (tool === "session_read") return "Session read"
++  return tool
++}

@@ -24,11 +24,13 @@ import { DEFAULT_CHILD_INPUT_WAKE_KINDS } from '../../config/constants';
 import {
   createInternalAgentTextPart,
   isInternalInitiatorPart,
+  TERMINAL_DELTA_METADATA_KEY,
 } from '../../utils';
 import { stringifyError } from '../../utils/child-transcript';
 import { isRecord as isObjectRecord } from '../../utils/guards';
 import { log } from '../../utils/logger';
 import type { SessionSelection } from '../../utils/session-selection';
+import { appendTrailingVolatileMessage } from '../cache-safe-injection';
 import type { SessionLifecycle } from '../session-lifecycle';
 import type { ChildInputWaitKind } from '../task-session-manager/child-input-wait';
 import {
@@ -36,6 +38,7 @@ import {
   parseContinuationModelSelection,
 } from '../task-session-manager/continuation-model-selection';
 import { isActiveStatus } from '../task-session-manager/status-utils';
+import type { MessageWithParts } from '../types';
 import {
   claimWakeSession,
   clearExpectingWakeBusy,
@@ -61,11 +64,6 @@ export const ORCHESTRATOR_WAKE_TEXT =
   '<system-reminder>\nFinish any incomplete TODOs. Await running agents; if one appears stuck, assess it and cancel/respawn only when justified. Do not respond to this reminder.\n</system-reminder>';
 
 export const ORCHESTRATOR_STOPPED_JOB_WAKE_TEXT =
-  '<system-reminder>\nA background job stopped without a terminal result. Consult the Background Job Board, recover or reroute the work as needed, and do not wait for that job as if it were still running. Do not respond to this reminder.\n</system-reminder>';
-
-/** Board-injection-off variant: the board never appears in prompts, so the
- * wake points at the pull channel that carries the same facts. */
-export const ORCHESTRATOR_STOPPED_JOB_WAKE_TEXT_NO_BOARD =
   '<system-reminder>\nA background job stopped without a terminal result. Check `task_status` for the stopped task, recover or reroute the work as needed, and do not wait for that job as if it were still running. Do not respond to this reminder.\n</system-reminder>';
 
 /**
@@ -163,6 +161,19 @@ export function formatStoppedJobDelta(record: {
   return `<stopped-job>\nalias: ${record.alias}\ntask: ${record.taskID}\nstate: ${record.state}\nreason: ${record.reason}\n</stopped-job>`;
 }
 
+/** Self-contained result for a later terminal publication not covered by the
+ * host's native first-publication notifier. The result text is carried
+ * verbatim; the generation/revision fence travels in part metadata, never in
+ * the prompt-visible body. */
+export function formatCompletedJobDelta(record: {
+  alias: string;
+  taskID: string;
+  state: 'completed' | 'error';
+  resultSummary: string;
+}): string {
+  return `<completed-job>\nalias: ${record.alias}\ntask: ${record.taskID}\nstate: ${record.state}\nresult: ${record.resultSummary}\n</completed-job>`;
+}
+
 /** Host-attributed stop outcome (shared with the stopped-recovery wake
  * gate in src/index.ts): the host's own report that it interrupted or
  * cancelled the run, committed by the terminal gate as a terminal result
@@ -240,6 +251,15 @@ export const CHILD_INPUT_OVERFLOW_TEXT =
 export const ORCHESTRATOR_CHILDREN_WAKE_TEXT =
   '<system-reminder>\nCheck on unfinished background child sessions and unreconciled jobs. Await running agents; if one appears stuck, assess it and cancel/respawn only when justified. Do not respond to this reminder.\n</system-reminder>';
 
+/** v2 rev>1 terminal publication has no native notifier (native delivery
+ * covers rev-1 only). The static instruction stays unmapped in repeat
+ * folding; publishing child identities travel in the new message's tail. */
+export const ORCHESTRATOR_PUBLICATION_WAKE_TEXT =
+  '<system-reminder>\nA background child finished a later round; its result was not delivered. Retrieve it with task_status { result: true } for that child — the task id is in your delegation history — then continue.\nDo not respond to this reminder.\n</system-reminder>';
+
+export const PUBLICATION_WAKE_METADATA_KEY =
+  'oh-my-opencode-slim.publicationWake';
+
 /** #1411: short core per delta-less wake template, used to build the
  * non-identical repeat marker when the same body was already delivered in
  * the session. Unmapped delta-less texts keep the full template. The
@@ -252,10 +272,6 @@ export const WAKE_REPEAT_CORES: ReadonlyMap<string, string> = new Map([
   ],
   [
     ORCHESTRATOR_STOPPED_JOB_WAKE_TEXT,
-    'A background job stopped without a terminal result; consult the Background Job Board and recover or reroute the work as needed.',
-  ],
-  [
-    ORCHESTRATOR_STOPPED_JOB_WAKE_TEXT_NO_BOARD,
     'A background job stopped without a terminal result; check task_status for the stopped task and recover or reroute the work as needed.',
   ],
   [
@@ -305,29 +321,38 @@ export const STOPPED_RECOVERY_QUEUE_CAP = 32;
 export const STOPPED_RECOVERY_WAKE_CHUNK = 8;
 
 /** Recovery facts that overflow the bounded detail queue still produce a
- * durable, actionable signal. The parent can consult the board for the facts
- * whose inline details were coalesced. */
+ * durable, actionable signal. The retained overflowed task identifiers are
+ * appended by the caller; `task_status` resolves each one. */
 export const STOPPED_RECOVERY_OVERFLOW_TEXT =
-  '<stopped-job-overflow>\nAdditional stopped-job recovery facts were queued beyond the inline detail limit. Consult the Background Job Board for all unreconciled stopped jobs.\n</stopped-job-overflow>';
+  '<stopped-job-overflow>\nAdditional stopped-job recovery facts were queued beyond the inline detail limit. Check task_status for the listed task IDs.\n</stopped-job-overflow>';
 
-/** Board-injection-off variant: overflow facts are pulled, not displayed.
- * The retained overflowed task identifiers are appended by the caller —
- * this notice alone cannot make the stops discoverable. */
-export const STOPPED_RECOVERY_OVERFLOW_TEXT_NO_BOARD =
-  '<stopped-job-overflow>\nAdditional stopped-job recovery facts were queued beyond the inline detail limit. The retained overflowed stopped task IDs are listed below; check `task_status` for each to see its facts.\n</stopped-job-overflow>';
+/** Completed results that overflow the bounded detail queue keep a durable
+ * pointer to the on-demand pull channel. */
+export const COMPLETED_JOB_OVERFLOW_TEXT =
+  '<completed-job-overflow>\nAdditional completed-job results were queued beyond the inline detail limit. Check task_status for the listed task IDs.\n</completed-job-overflow>';
 
-/** Upper bound on task identifiers inlined in the board-less overflow
- * notice: keeps the wake prompt bounded under pathological stop floods;
- * evictions beyond the cap are reported as a count, not listed. */
+/** Max completed-job results queued per parent. Same bounding policy as the
+ * stopped-job recovery queue: oldest entries are dropped with an overflow
+ * bump, so a busy parent cannot grow an unbounded push. */
+export const COMPLETED_JOB_QUEUE_CAP = 32;
+
+/** Max completed-job results appended to one push. Remaining entries stay
+ * queued for the next wake. */
+export const COMPLETED_JOB_WAKE_CHUNK = 8;
+
+/** Upper bound on task identifiers inlined in the overflow notice: keeps the
+ * wake prompt bounded under pathological stop floods; evictions beyond the
+ * cap are reported as a count, not listed. */
 export const STOPPED_RECOVERY_OVERFLOW_ID_CAP = 64;
 
-/** Bounded overflow IDs shared by both queues; unretained entries stay honest. */
+/** Bounded overflow IDs shared by all queues; unretained entries stay honest. */
 function overflowedTaskIDs(
   keys: string[],
   totalOverflowCount: number,
-  kind: 'stopped-job' | 'child-input-wait',
+  kind: 'stopped-job' | 'completed-job' | 'child-input-wait',
 ): string {
-  const parse = kind === 'stopped-job' ? parseRecoveryKey : parseChildInputKey;
+  const parse =
+    kind === 'child-input-wait' ? parseChildInputKey : parseRecoveryKey;
   const ids = [
     ...new Set(
       keys
@@ -427,6 +452,14 @@ export type OrchestratorWakeConfig = {
   publicationWakeMinIntervalMs?: number;
 };
 
+export type WakeSchedulerTimers = {
+  setTimeout: (
+    callback: () => void,
+    delay: number,
+  ) => ReturnType<typeof setTimeout>;
+  clearTimeout: (timer: ReturnType<typeof setTimeout>) => void;
+};
+
 export type OrchestratorWakeOptions = {
   config: OrchestratorWakeConfig;
   shouldManageSession: (sessionID: string) => boolean;
@@ -437,6 +470,10 @@ export type OrchestratorWakeOptions = {
    * The callback must check both the task generation and that the current
    * record is still stopped and terminal-unreconciled. */
   isStoppedJobRecoveryCurrent?: (taskID: string, generation: number) => boolean;
+  /** Revalidate a queued completed-job result immediately before delivering
+   * its push. The callback must check both the task generation and that the
+   * current record is still terminal-unreconciled in the same state. */
+  isCompletedJobCurrent?: (taskID: string, generation: number) => boolean;
   /** Revalidate a queued child input wait immediately before delivering its
    * wake. The callback must check the ask is still open for the current run
    * of the child task. */
@@ -454,11 +491,12 @@ export type OrchestratorWakeOptions = {
   hasPendingDelegatedWork?: (sessionID: string) => boolean;
   /** Test seam: override interval without changing config validation. */
   intervalMs?: number;
-  /** Whether the Background Job Board is injected into orchestrator
-   * prompts. Stopped-recovery and overflow wake texts reference the board
-   * only when it is actually visible to the model; otherwise they point at
-   * `task_status` instead. Absent means enabled (v1 parity). */
-  boardInjectionEnabled?: boolean;
+  /** Scheduling seam for deterministic tests. Defaults to the global timer
+   * functions, resolved at call time. */
+  setTimeout?: WakeSchedulerTimers['setTimeout'];
+  clearTimeout?: WakeSchedulerTimers['clearTimeout'];
+  /** Observation clock for publication spacing; independent of scheduling. */
+  now?: () => number;
   /** C2 writer-lane verdict for a queued child task: the caller derives it
    * from the child agent's role write permissions. Return false only for a
    * task whose agent is known to lack write capability; unknown tasks and
@@ -469,6 +507,23 @@ export type OrchestratorWakeOptions = {
    * `backgroundJobs.childInputWakeKinds`). Absent means the shipped
    * default: permission asks off, question asks on (#1504). */
   childInputWakeKinds?: { permission: boolean; question: boolean };
+  /** One terminal publication this scheduler accepted delivery for. The
+   * caller acknowledges exactly these executions, never every child that
+   * happens to be terminal when a generic wake lands. */
+  onPublicationAccepted?: (publication: {
+    sessionID: string;
+    taskID: string;
+    generation: number;
+    terminalRevision?: number;
+  }) => void;
+  /** Revalidate a retained publication immediately before acknowledging
+   * it: the record must still be the same terminal execution. */
+  isPublicationCurrent?: (publication: {
+    sessionID: string;
+    taskID: string;
+    generation: number;
+    terminalRevision?: number;
+  }) => boolean;
 };
 
 /**
@@ -787,9 +842,25 @@ function isInputWaitAskEvent(type: string): boolean {
   return type === 'permission.asked' || type === 'question.asked';
 }
 
+/** Exact terminal run a queued completed-job result reports. The identifier
+ * and the fence ride the delivered part's metadata (never the prompt-visible
+ * body), so retirement can be generation-fenced without extra prompt bytes. */
+export type CompletedJobFence = {
+  taskID: string;
+  generation: number;
+  terminalRevision: number;
+  state: 'completed' | 'error';
+};
+
+/** One queued delta: its prompt body plus an optional retirement fence. */
+type DeltaEntry = {
+  text: string;
+  fence?: CompletedJobFence;
+};
+
 /** One wake kind's queued deltas for one parent session. */
 type DeltaBatch = {
-  deltas: Map<string, string>;
+  deltas: Map<string, DeltaEntry>;
   /** Number of detail entries coalesced beyond the bounded queue. */
   overflowCount: number;
   /** Keys of entries dropped by the cap, newest-first-drop order. The
@@ -803,14 +874,22 @@ type DeltaQueuePolicy = {
   /** Max deltas per parent; the oldest is dropped with an overflow bump. */
   cap: number;
   /** scheduleBlocker trigger name used when this queue's wake is blocked. */
-  blockerTrigger: 'stopped-job-recovery' | 'child-input';
+  blockerTrigger:
+    | 'stopped-job-recovery'
+    | 'terminal-publication'
+    | 'child-input';
   /** Whether a queued delta is still actionable (unparseable keys are not). */
   isCurrent?: (key: string) => boolean;
 };
 
 type DeltaQueue = DeltaQueuePolicy & {
   batches: Map<string, DeltaBatch>;
-  add: (sessionID: string, delta: string, dedupeKey?: string) => void;
+  add: (
+    sessionID: string,
+    delta: string,
+    dedupeKey?: string,
+    fence?: CompletedJobFence,
+  ) => void;
   prune: (batch: DeltaBatch | undefined) => boolean;
 };
 
@@ -824,7 +903,12 @@ function makeDeltaQueue(policy: DeltaQueuePolicy): DeltaQueue {
   const batches = new Map<string, DeltaBatch>();
 
   /** Queue a delta for the session's next wake of this kind. */
-  const add = (sessionID: string, delta: string, dedupeKey?: string): void => {
+  const add = (
+    sessionID: string,
+    delta: string,
+    dedupeKey?: string,
+    fence?: CompletedJobFence,
+  ): void => {
     let batch = batches.get(sessionID);
     if (!batch) {
       batch = { deltas: new Map(), overflowCount: 0, overflowedKeys: [] };
@@ -832,7 +916,7 @@ function makeDeltaQueue(policy: DeltaQueuePolicy): DeltaQueue {
     }
     const key = dedupeKey ?? delta;
     if (batch.deltas.has(key)) {
-      batch.deltas.set(key, delta);
+      batch.deltas.set(key, { text: delta, fence });
       return;
     }
     while (batch.deltas.size >= policy.cap) {
@@ -847,7 +931,7 @@ function makeDeltaQueue(policy: DeltaQueuePolicy): DeltaQueue {
         batch.overflowedKeys.push(oldest);
       }
     }
-    batch.deltas.set(key, delta);
+    batch.deltas.set(key, { text: delta, fence });
   };
 
   /** Drop stale details and retained overflow keys before delivery. Counts
@@ -885,14 +969,21 @@ function prunedToEmpty(queue: DeltaQueue, batch: DeltaBatch): boolean {
   return hadDetails && batch.deltas.size === 0 && batch.overflowCount === 0;
 }
 
-/** Retire the delivered overflow identities, not a now-stale positional count. */
+/** Retire the delivered overflow identities, not a now-stale positional count.
+ * A sent entry is retired by IDENTITY, not by key alone: an add() that
+ * replaced the queued entry under the same dedupe key while the send was in
+ * flight (a newer terminal revision of the same task) must survive the older
+ * send's confirmation, otherwise the newest answer is lost (Greptile P1
+ * 4344212804). */
 function retireDeltaBatch(
   batch: DeltaBatch,
-  keys: string[],
+  entries: Array<[string, DeltaEntry]>,
   overflowKeys: string[],
   overflowCount: number,
 ): boolean {
-  for (const key of keys) batch.deltas.delete(key);
+  for (const [key, entry] of entries) {
+    if (batch.deltas.get(key) === entry) batch.deltas.delete(key);
+  }
   const delivered = new Set(overflowKeys);
   const retainedCount = batch.overflowedKeys.length;
   batch.overflowedKeys = batch.overflowedKeys.filter(
@@ -934,9 +1025,9 @@ export function createOrchestratorWakeScheduler(
   options: OrchestratorWakeOptions,
 ) {
   const intervalMs = options.intervalMs ?? options.config.intervalMs;
+  const now = options.now ?? Date.now;
   const enabled = options.config.enabled === true;
   const periodicWakeEnabled = options.config.periodicWakeEnabled ?? true;
-  const boardInjectionEnabled = options.boardInjectionEnabled ?? true;
   const wakeOnTerminalPublication =
     options.config.wakeOnTerminalPublication ?? true;
   const publicationWakeMinIntervalMs =
@@ -947,6 +1038,12 @@ export function createOrchestratorWakeScheduler(
     options.childInputWakeKinds ?? DEFAULT_CHILD_INPUT_WAKE_KINDS;
   const directory = ctx.directory;
   const sessionSdk = (ctx.client as OpencodeClient).session;
+  const scheduleTimeout: WakeSchedulerTimers['setTimeout'] =
+    options.setTimeout ??
+    ((callback, delay) =>
+      setTimeout(callback, delay) as ReturnType<typeof setTimeout>);
+  const cancelTimeout: WakeSchedulerTimers['clearTimeout'] =
+    options.clearTimeout ?? ((timer) => clearTimeout(timer));
 
   /** Static host-surface capability record (the client never changes). */
   const capabilities = probeSessionApis(
@@ -997,10 +1094,116 @@ export function createOrchestratorWakeScheduler(
   });
   const pendingStoppedRecoveries = stoppedRecoveryQueue.batches;
 
+  const completedCurrent = options.isCompletedJobCurrent;
+  /** Later terminal results (rev>1 completed/error) the host's native
+   * first-publication notifier does not cover, carrying one self-contained
+   * `<completed-job>` delta each (see `formatCompletedJobDelta`). Deduplicated
+   * per execution by `${taskID}:${generation}`; bounded per parent
+   * (`COMPLETED_JOB_QUEUE_CAP`) with at most `COMPLETED_JOB_WAKE_CHUNK`
+   * entries per wake and an overflow pointer to `task_status`. Deltas that
+   * arrive while a wake is in flight survive its confirmation: only the keys
+   * actually sent are retired on delivery. */
+  const completedJobQueue = makeDeltaQueue({
+    cap: COMPLETED_JOB_QUEUE_CAP,
+    blockerTrigger: 'terminal-publication',
+    isCurrent: completedCurrent
+      ? (key) => {
+          const parsed = parseRecoveryKey(key);
+          return parsed
+            ? completedCurrent(parsed.taskID, parsed.generation)
+            : false;
+        }
+      : undefined,
+  });
+  const pendingCompletedJobs = completedJobQueue.batches;
+
   /** Last delivered publication wake per parent (epoch ms), for the
    * `publicationWakeMinIntervalMs` throttle. Direct, timer and waiter
    * deliveries all consume the window; failed attempts do not. */
   const lastPublicationWakeAt = new Map<string, number>();
+  /** Executions awaiting an accepted terminal publication. Busy/throttled/
+   * failed attempts retain them; a later timer/waiter/direct acceptance of
+   * a publication wake acknowledges exactly the facts still current. */
+  type PendingPublication = {
+    sessionID: string;
+    taskID: string;
+    generation: number;
+    terminalRevision?: number;
+  };
+  const pendingPublications = new Map<
+    string,
+    Map<string, PendingPublication>
+  >();
+  /** Maximum executions named by one wake body; the rest stay pending. */
+  const MAX_PUBLICATIONS_PER_WAKE = 256;
+
+  function pendingPublicationKey(publication: PendingPublication): string {
+    return `${publication.taskID}:${publication.generation}:${
+      publication.terminalRevision ?? ''
+    }`;
+  }
+
+  function retainPendingPublication(publication: PendingPublication): void {
+    const existing = pendingPublications.get(publication.sessionID);
+    const facts = existing ?? new Map<string, PendingPublication>();
+    facts.set(pendingPublicationKey(publication), publication);
+    pendingPublications.set(publication.sessionID, facts);
+    const state = touchLocal(publication.sessionID);
+    state.continuousIdle = true;
+    state.retryReason = 'publication';
+    schedule(publication.sessionID);
+  }
+
+  /** Snapshot the executions a publication body is about to cover. Entries
+   * are revalidated now; a delivery that arrived earlier must not be
+   * published a second time. The snapshot is never mutated by arrivals
+   * during the send. */
+  function snapshotPendingPublications(
+    sessionID: string,
+  ): PendingPublication[] {
+    const facts = pendingPublications.get(sessionID);
+    if (!facts) return [];
+    const current: PendingPublication[] = [];
+    for (const [key, fact] of facts) {
+      if (options.isPublicationCurrent?.(fact) === false) {
+        facts.delete(key);
+        continue;
+      }
+      current.push(fact);
+    }
+    if (facts.size === 0) pendingPublications.delete(sessionID);
+    return current.slice(0, MAX_PUBLICATIONS_PER_WAKE);
+  }
+
+  function pendingPublicationCount(sessionID: string): number {
+    return pendingPublications.get(sessionID)?.size ?? 0;
+  }
+
+  function hasPendingPublications(sessionID: string): boolean {
+    return pendingPublicationCount(sessionID) > 0;
+  }
+
+  /** Acknowledge exactly the snapshot carried by the accepted body. A new
+   * execution queued while promptAsync was in flight remains pending. */
+  function acknowledgePendingPublications(
+    sessionID: string,
+    batch: readonly PendingPublication[],
+  ): void {
+    const facts = pendingPublications.get(sessionID);
+    if (!facts) return;
+    for (const fact of batch) {
+      const key = pendingPublicationKey(fact);
+      const current = facts.get(key);
+      if (current !== fact) continue;
+      if (options.isPublicationCurrent?.(fact) === false) {
+        facts.delete(key);
+        continue;
+      }
+      facts.delete(key);
+      options.onPublicationAccepted?.(fact);
+    }
+    if (facts.size === 0) pendingPublications.delete(sessionID);
+  }
 
   const childInputCurrent = options.isChildInputWaitCurrent;
   /** Sessions with a background child awaiting an input-wait wake, carrying
@@ -1028,8 +1231,33 @@ export function createOrchestratorWakeScheduler(
   function clearChildInputTimer(sessionID: string): void {
     const timer = childInputTimers.get(sessionID);
     if (timer === undefined) return;
-    clearTimeout(timer);
+    cancelTimeout(timer);
     childInputTimers.delete(sessionID);
+  }
+
+  /** Deferred completed-result pushes held back by the per-parent
+   * `publicationWakeMinIntervalMs` spacing. The queued deltas stay in
+   * `completedJobQueue`; the timer only re-drives delivery once the window
+   * has elapsed, so a burst of results coalesces into one wake. */
+  const completedSpacingTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+
+  function clearCompletedSpacingTimer(sessionID: string): void {
+    const timer = completedSpacingTimers.get(sessionID);
+    if (timer === undefined) return;
+    cancelTimeout(timer);
+    completedSpacingTimers.delete(sessionID);
+  }
+
+  /** Remaining publication spacing for a parent (ms, 0 when clear). */
+  function publicationSpacingRemaining(sessionID: string): number {
+    const lastWakeAt = lastPublicationWakeAt.get(sessionID);
+    if (lastWakeAt === undefined || publicationWakeMinIntervalMs <= 0) {
+      return 0;
+    }
+    return Math.max(0, lastWakeAt + publicationWakeMinIntervalMs - now());
   }
 
   /** Event-tracked session statuses (busy-set + parent race guard). */
@@ -1105,7 +1333,7 @@ export function createOrchestratorWakeScheduler(
 
   function clearTimer(state: LocalSessionState): void {
     if (state.timer !== undefined) {
-      clearTimeout(state.timer);
+      cancelTimeout(state.timer);
       state.timer = undefined;
     }
   }
@@ -1132,17 +1360,21 @@ export function createOrchestratorWakeScheduler(
 
   function clearSession(sessionID: string): void {
     clearChildInputTimer(sessionID);
+    clearCompletedSpacingTimer(sessionID);
     releaseLocalWakeOwner(sessionID);
     clearLocalSession(sessionID);
     clearWakeSession(sessionID);
     pendingStoppedRecoveries.delete(sessionID);
+    pendingCompletedJobs.delete(sessionID);
     lastPublicationWakeAt.delete(sessionID);
+    pendingPublications.delete(sessionID);
     pendingChildInputWakes.delete(sessionID);
     reportedScheduleBlockers.delete(sessionID);
   }
 
   function suppressArchivedSession(sessionID: string): void {
     clearChildInputTimer(sessionID);
+    clearCompletedSpacingTimer(sessionID);
     const state = touchLocal(sessionID);
     clearTimer(state);
     bumpGeneration(state);
@@ -1168,6 +1400,9 @@ export function createOrchestratorWakeScheduler(
    */
   function suppress(sessionID: string): void {
     clearChildInputTimer(sessionID);
+    // The queued results survive; the next idle re-drives them through the
+    // same spacing check.
+    clearCompletedSpacingTimer(sessionID);
     const state = localSessions.get(sessionID);
     if (!state) return;
     clearTimer(state);
@@ -1234,7 +1469,7 @@ export function createOrchestratorWakeScheduler(
   function reportScheduleBlocker(
     sessionID: string,
     reason: string,
-    trigger?: 'stopped-job-recovery' | 'child-input',
+    trigger?: 'stopped-job-recovery' | 'terminal-publication' | 'child-input',
   ): void {
     let reasons = reportedScheduleBlockers.get(sessionID);
     if (!reasons) {
@@ -1259,7 +1494,23 @@ export function createOrchestratorWakeScheduler(
     }
   }
 
-  function schedule(sessionID: string): void {
+  /** Reason for the next armed timer. Retained publications are durable
+   * pending work: a busy transition bumps the generation, which clears the
+   * generation-scoped `retryReason`, but the executions stay in
+   * `pendingPublications` until an accepted delivery. Deriving 'publication'
+   * from that retained state keeps the idle reschedule (and any reschedule
+   * after a generation-bumping lifecycle event) off the periodic path, which
+   * is disabled by default on v2 hosts and would otherwise strand the
+   * pending delivery. Deletion/archive clear or suppress the state instead of
+   * preserving a stale reason. */
+  function scheduledWakeReason(sessionID: string): WakeReason {
+    const retryReason = localSessions.get(sessionID)?.retryReason;
+    if (retryReason) return retryReason;
+    if (hasPendingPublications(sessionID)) return 'publication';
+    return 'periodic';
+  }
+
+  function schedule(sessionID: string, delayMs = intervalMs): void {
     const blocker = scheduleBlocker(sessionID);
     if (blocker) {
       reportScheduleBlocker(sessionID, blocker);
@@ -1270,16 +1521,16 @@ export function createOrchestratorWakeScheduler(
     if (getWakeProgress(sessionID).stopped) return;
 
     const generation = state.generation;
-    const timer = setTimeout(() => {
+    const timer = scheduleTimeout(() => {
       state.timer = undefined;
       if (state.generation !== generation) return;
-      const reason = state.retryReason ?? 'periodic';
+      const reason = scheduledWakeReason(sessionID);
       // Periodic-arm gate only: recovery/publication wakes that failed on
       // an SDK error ride this same timer through `retryReason` and must
       // still deliver while the periodic evaluation is disabled.
       if (reason === 'periodic' && !periodicWakeEnabled) return;
       void evaluate(sessionID, generation, reason);
-    }, intervalMs);
+    }, delayMs);
     timer.unref?.();
     state.timer = timer;
     log('[orchestrator-wake] backstop armed', { sessionID, intervalMs });
@@ -1762,7 +2013,8 @@ export function createOrchestratorWakeScheduler(
     if (
       recoveryWake &&
       childInputTimers.has(sessionID) &&
-      !pendingStoppedRecoveries.has(sessionID)
+      !pendingStoppedRecoveries.has(sessionID) &&
+      !pendingCompletedJobs.has(sessionID)
     ) {
       return false;
     }
@@ -1783,6 +2035,20 @@ export function createOrchestratorWakeScheduler(
       });
       suppress(sessionID);
       return false;
+    }
+
+    if (reason === 'publication' && capabilities.flavor === 'v2') {
+      if (!hasPendingPublications(sessionID)) return false;
+      const lastWakeAt = lastPublicationWakeAt.get(sessionID);
+      const remaining =
+        lastWakeAt === undefined
+          ? 0
+          : lastWakeAt + publicationWakeMinIntervalMs - now();
+      if (remaining > 0) {
+        state.retryReason = 'publication';
+        schedule(sessionID, remaining);
+        return false;
+      }
     }
 
     const owner = tryBeginWakeEvaluation(sessionID);
@@ -1812,6 +2078,8 @@ export function createOrchestratorWakeScheduler(
           reservation: Map<string, number>;
         }
       | undefined;
+    /** Set once the transport accepted this attempt's wake. */
+    let accepted = false;
 
     try {
       const snapshot =
@@ -1927,28 +2195,44 @@ export function createOrchestratorWakeScheduler(
         return false;
       }
 
-      const recoveryBatch = recoveryWake
+      let recoveryBatch = recoveryWake
         ? pendingStoppedRecoveries.get(sessionID)
+        : undefined;
+      let completedBatch = recoveryWake
+        ? pendingCompletedJobs.get(sessionID)
         : undefined;
       // A resolved ask must not cause an input-wait wake by itself: prune
       // queued ask deltas even when no stopped-job batch is present. When
       // neither evidenced work remains, the wake ends here. An overflow
       // marker remains actionable even when all retained details have
       // since gone stale.
-      const childInputDeltas = pendingChildInputWakes.get(sessionID);
+      let childInputDeltas = pendingChildInputWakes.get(sessionID);
       if (
         childInputDeltas &&
         prunedToEmpty(childInputQueue, childInputDeltas)
       ) {
         pendingChildInputWakes.delete(sessionID);
-        if (!recoveryBatch) return false;
+        childInputDeltas = undefined;
+        if (!recoveryBatch && !completedBatch) return false;
       }
       // A stale, revived, or already-reconciled detail must not cause a
       // recovery wake by itself. An overflow marker remains actionable even
       // when all retained details have since gone stale.
       if (recoveryBatch && prunedToEmpty(stoppedRecoveryQueue, recoveryBatch)) {
         pendingStoppedRecoveries.delete(sessionID);
-        return false;
+        recoveryBatch = undefined;
+        // A still-queued child question must not be stranded here: its own
+        // settling timer already fired, and the only remaining timer (the
+        // periodic path) stops when the parent has no incomplete TODOs
+        // (Greptile P1 4344705554).
+        if (!completedBatch && !childInputDeltas) return false;
+      }
+      // A completed result whose record reopened, left the parent, or was
+      // already consumed must not wake the parent on its own.
+      if (completedBatch && prunedToEmpty(completedJobQueue, completedBatch)) {
+        pendingCompletedJobs.delete(sessionID);
+        completedBatch = undefined;
+        if (!recoveryBatch && !childInputDeltas) return false;
       }
 
       const modelSelection =
@@ -1987,16 +2271,26 @@ export function createOrchestratorWakeScheduler(
       }
       // Re-prune stop facts after the selection await: a child can leave
       // stopped/unreconciled while parent generation stays put (#1079 r2).
-      // Same for asks answered while queued.
+      // Same for asks answered while queued and for consumed results.
       if (recoveryBatch && prunedToEmpty(stoppedRecoveryQueue, recoveryBatch)) {
         pendingStoppedRecoveries.delete(sessionID);
-        return false;
+        recoveryBatch = undefined;
+        // Same stranding guard as the pre-selection prune: a still-queued
+        // child question has no timer left after this one.
+        if (!completedBatch && !pendingChildInputWakes.get(sessionID)) {
+          return false;
+        }
+      }
+      if (completedBatch && prunedToEmpty(completedJobQueue, completedBatch)) {
+        pendingCompletedJobs.delete(sessionID);
+        completedBatch = undefined;
       }
       const liveChildInputDeltas = pendingChildInputWakes.get(sessionID);
       if (
         liveChildInputDeltas &&
         prunedToEmpty(childInputQueue, liveChildInputDeltas) &&
-        !recoveryBatch
+        !recoveryBatch &&
+        !completedBatch
       ) {
         pendingChildInputWakes.delete(sessionID);
         return false;
@@ -2015,6 +2309,7 @@ export function createOrchestratorWakeScheduler(
       if (
         recoveryWake &&
         !recoveryBatch &&
+        !completedBatch &&
         (childInputTimers.has(sessionID) || !liveChildInputDeltas)
       ) {
         return false;
@@ -2054,52 +2349,127 @@ export function createOrchestratorWakeScheduler(
       const sendInputKeys = sendInputDeltas
         ? [...sendInputDeltas.deltas.keys()].slice(0, CHILD_INPUT_WAKE_CHUNK)
         : [];
+      const sentInputEntries: Array<[string, DeltaEntry]> = sendInputDeltas
+        ? [...sendInputDeltas.deltas.entries()].slice(0, CHILD_INPUT_WAKE_CHUNK)
+        : [];
       const sentInputOverflowCount = sendInputDeltas?.overflowCount ?? 0;
       const sentInputOverflowKeys = [
         ...(sendInputDeltas?.overflowedKeys ?? []),
       ];
       const inputDelta = sendInputKeys
-        .map((key) => sendInputDeltas?.deltas.get(key))
+        .map((key) => sendInputDeltas?.deltas.get(key)?.text)
         .filter((text): text is string => typeof text === 'string')
         .join('\n');
       const wakeText =
         // Overflow-only asks are input waits too; never report them as stops.
         // Request-specific reply guidance travels in each detail.
         (sendInputKeys.length > 0 || sentInputOverflowCount > 0) &&
-        !recoveryBatch
+        !recoveryBatch &&
+        !completedBatch
           ? ORCHESTRATOR_CHILD_INPUT_WAKE_TEXT
           : recoveryWake
-            ? boardInjectionEnabled
+            ? recoveryBatch
               ? ORCHESTRATOR_STOPPED_JOB_WAKE_TEXT
-              : ORCHESTRATOR_STOPPED_JOB_WAKE_TEXT_NO_BOARD
-            : wakeMode === 'children'
-              ? ORCHESTRATOR_CHILDREN_WAKE_TEXT
-              : ORCHESTRATOR_WAKE_TEXT;
+              : // A completed-job result carries its own facts; the wake is a
+                // bare resume pointer instead of standing prose.
+                ORCHESTRATOR_PUBLICATION_WAKE_TEXT
+            : reason === 'publication' && capabilities.flavor === 'v2'
+              ? // rev>1 terminal publication: no native notifier exists on
+                // either host, so this static pointer is the parent's only
+                // retrieval instruction.
+                ORCHESTRATOR_PUBLICATION_WAKE_TEXT
+              : wakeMode === 'children'
+                ? ORCHESTRATOR_CHILDREN_WAKE_TEXT
+                : ORCHESTRATOR_WAKE_TEXT;
+      // Snapshot the publications this body covers BEFORE the send. A
+      // terminal publication arriving during promptAsync is not in this
+      // batch and must retain its own pending acknowledgement.
+      const publicationBatch =
+        reason === 'publication' ? snapshotPendingPublications(sessionID) : [];
+      if (reason === 'publication' && publicationBatch.length === 0) {
+        // Every queued execution was retired by a trusted delivery while this
+        // attempt waited. Do not emit a generic forced publication wake, and
+        // give the wake reservation back so the abort does not consume it.
+        rollbackWakeReservation(sessionID, owner);
+        if (state.generation === generation) state.retryReason = undefined;
+        return false;
+      }
+      const remainingPublications = Math.max(
+        0,
+        pendingPublicationCount(sessionID) - publicationBatch.length,
+      );
+      const publicationSummary =
+        publicationBatch.length > 0
+          ? `Background task results available: ${publicationBatch
+              .map((publication) => publication.taskID)
+              .join(', ')}.${
+              remainingPublications > 0
+                ? ` ${remainingPublications} more pending delivery.`
+                : ''
+            }`
+          : '';
       // Snapshot keys/values at send time. Do not detach the map: a stop
       // arriving during promptAsync lands in the same entry and must survive
-      // confirmation. After delivery, retire only the keys that were sent.
+      // confirmation. After delivery, retire only the ENTRIES that were
+      // sent — a same-key add() that replaced them mid-flight survives.
       const sentKeys = recoveryBatch
         ? [...recoveryBatch.deltas.keys()].slice(0, STOPPED_RECOVERY_WAKE_CHUNK)
+        : [];
+      const sentEntries: Array<[string, DeltaEntry]> = recoveryBatch
+        ? [...recoveryBatch.deltas.entries()].slice(
+            0,
+            STOPPED_RECOVERY_WAKE_CHUNK,
+          )
         : [];
       const sentOverflowCount = recoveryBatch?.overflowCount ?? 0;
       const sentOverflowKeys = [...(recoveryBatch?.overflowedKeys ?? [])];
       const recoveryDelta = sentKeys
-        .map((key) => recoveryBatch?.deltas.get(key))
+        .map((key) => recoveryBatch?.deltas.get(key)?.text)
         .filter((text): text is string => typeof text === 'string')
         .join('\n');
       const overflowDelta =
         recoveryBatch && recoveryBatch.overflowCount > 0
-          ? boardInjectionEnabled
-            ? STOPPED_RECOVERY_OVERFLOW_TEXT
-            : // Board-less overflow has no passive display fallback and
-              // `task_status` needs a known id, so the notice carries the
-              // retained overflowed task identifiers itself instead of
-              // pointing at a channel that cannot list them.
-              `${STOPPED_RECOVERY_OVERFLOW_TEXT_NO_BOARD}\n${overflowedTaskIDs(
-                recoveryBatch.overflowedKeys,
-                recoveryBatch.overflowCount,
-                'stopped-job',
-              )}`
+          ? // The overflowed facts are pulled, not displayed: the retained
+            // task identifiers travel with the notice so `task_status` can
+            // resolve each one.
+            `${STOPPED_RECOVERY_OVERFLOW_TEXT}\n${overflowedTaskIDs(
+              recoveryBatch.overflowedKeys,
+              recoveryBatch.overflowCount,
+              'stopped-job',
+            )}`
+          : '';
+      // Later terminal results (rev>1 completed/error): one self-contained
+      // `<completed-job>` delta each. Same send-time snapshot discipline as
+      // the stopped batch: only the keys actually sent are retired, and the
+      // generation/revision fence rides in the part metadata so retirement
+      // can be observed from parent history without extra prompt bytes.
+      const sentCompletedKeys = completedBatch
+        ? [...completedBatch.deltas.keys()].slice(0, COMPLETED_JOB_WAKE_CHUNK)
+        : [];
+      const sentCompletedEntries: Array<[string, DeltaEntry]> = completedBatch
+        ? [...completedBatch.deltas.entries()].slice(
+            0,
+            COMPLETED_JOB_WAKE_CHUNK,
+          )
+        : [];
+      const sentCompletedOverflowCount = completedBatch?.overflowCount ?? 0;
+      const sentCompletedOverflowKeys = [
+        ...(completedBatch?.overflowedKeys ?? []),
+      ];
+      const completedDelta = sentCompletedKeys
+        .map((key) => completedBatch?.deltas.get(key)?.text)
+        .filter((text): text is string => typeof text === 'string')
+        .join('\n');
+      const completedFences = sentCompletedKeys
+        .map((key) => completedBatch?.deltas.get(key)?.fence)
+        .filter((fence): fence is CompletedJobFence => fence !== undefined);
+      const completedOverflowDelta =
+        completedBatch && completedBatch.overflowCount > 0
+          ? `${COMPLETED_JOB_OVERFLOW_TEXT}\n${overflowedTaskIDs(
+              completedBatch.overflowedKeys,
+              completedBatch.overflowCount,
+              'completed-job',
+            )}`
           : '';
       const inputOverflowDelta =
         sendInputDeltas && sentInputOverflowCount > 0
@@ -2136,13 +2506,34 @@ export function createOrchestratorWakeScheduler(
           ? WRITER_LANE_VERIFICATION_TEXT
           : '';
       const recoveryDetails = [
+        publicationSummary,
         overflowDelta,
         recoveryDelta,
+        completedOverflowDelta,
+        completedDelta,
         inputOverflowDelta,
         inputDelta,
         writerLaneDetail,
       ]
         .filter(Boolean)
+        .join('\n');
+      // Pointer metadata comes from the same run-fenced snapshot whose
+      // acceptance retires pending facts, including its bounded overflow.
+      const sentPublications =
+        capabilities.flavor === 'v2'
+          ? publicationBatch.map(
+              ({ taskID, generation, terminalRevision }) => ({
+                taskID,
+                generation,
+                ...(terminalRevision !== undefined ? { terminalRevision } : {}),
+              }),
+            )
+          : [];
+      const publicationDetails = sentPublications
+        .map(
+          ({ taskID }) =>
+            `Later result: task_status { sessionID: ${JSON.stringify(taskID)}, result: true }`,
+        )
         .join('\n');
       // #1411: collapse byte-identical delta-less wake bodies into a short
       // repeat marker (child-input wakes are exempt: their caveat template
@@ -2154,6 +2545,7 @@ export function createOrchestratorWakeScheduler(
         : wakeText;
       if (
         recoveryDetails === '' &&
+        publicationDetails === '' &&
         wakeText !== ORCHESTRATOR_CHILD_INPUT_WAKE_TEXT
       ) {
         const { repeat, occurrence, reservation } = reserveWakeBodyOccurrence(
@@ -2172,6 +2564,7 @@ export function createOrchestratorWakeScheduler(
           });
         }
       }
+      if (publicationDetails) bodyText = `${bodyText}\n${publicationDetails}`;
       // C2 anti-forgery suffix (v2 only): the fully assembled body —
       // including repeat markers and child-input templates — closes with
       // one static sentence. The repeat-key reservation above used the raw
@@ -2179,11 +2572,38 @@ export function createOrchestratorWakeScheduler(
       if (capabilities.flavor === 'v2') {
         bodyText = `${bodyText}\n${WAKE_ANTI_FORGERY_TEXT}`;
       }
+      const internalPart = createInternalAgentTextPart(
+        bodyText,
+        // Completed-job pushes carry their exact run fence in part metadata
+        // (never in the body): parent-history observation retires only the
+        // publication this part actually reported.
+        completedFences.length > 0
+          ? { [TERMINAL_DELTA_METADATA_KEY]: completedFences }
+          : undefined,
+      );
+      // promptAsync appends one NEW user message; it does not transform
+      // history. Build that volatile trailing message through the shared
+      // helper, preserving the internal-initiator tag on its sole part.
+      const publicationMessages: MessageWithParts[] = [];
+      if (publicationDetails) {
+        appendTrailingVolatileMessage(
+          publicationMessages,
+          { role: 'user', sessionID },
+          {
+            text: internalPart.text,
+            metadataKey: PUBLICATION_WAKE_METADATA_KEY,
+            extraMetadata: {
+              ...internalPart.metadata,
+              publications: sentPublications,
+            },
+          },
+        );
+      }
       const body = {
         agent: wakeAgent,
         ...(wakeModel ? { model: wakeModel } : {}),
         ...(wakeModel && wakeVariant ? { variant: wakeVariant } : {}),
-        parts: [createInternalAgentTextPart(bodyText)],
+        parts: publicationMessages[0]?.parts ?? [internalPart],
       };
       if (wakeMode === 'children' && capabilities.flavor === 'v2') {
         // v1 prompt_async queued; 'queue' preserves that on v2 ('steer'
@@ -2226,37 +2646,52 @@ export function createOrchestratorWakeScheduler(
         });
       }
       if (recoveryWake) {
-        for (const [queue, sentBatch, keys, overflowKeys, count] of [
+        for (const [queue, sentBatch, entries, overflowKeys, count] of [
           [
             stoppedRecoveryQueue,
             recoveryBatch,
-            sentKeys,
+            sentEntries,
             sentOverflowKeys,
             sentOverflowCount,
           ],
           [
+            completedJobQueue,
+            completedBatch,
+            sentCompletedEntries,
+            sentCompletedOverflowKeys,
+            sentCompletedOverflowCount,
+          ],
+          [
             childInputQueue,
             sendInputDeltas,
-            sendInputKeys,
+            sentInputEntries,
             sentInputOverflowKeys,
             sentInputOverflowCount,
           ],
         ] as const) {
           const remaining = queue.batches.get(sessionID);
           if (!remaining || remaining !== sentBatch) continue;
-          if (retireDeltaBatch(remaining, keys, overflowKeys, count)) {
+          if (retireDeltaBatch(remaining, entries, overflowKeys, count)) {
             queue.batches.delete(sessionID);
           } else {
             rearmWakeProgress(sessionID);
           }
         }
+        // A delivered completed-result push consumes the per-parent
+        // publication spacing window, like a publication wake does.
+        if (sentCompletedEntries.length > 0 || sentCompletedOverflowCount > 0) {
+          lastPublicationWakeAt.set(sessionID, now());
+          boundTrackedMap(lastPublicationWakeAt);
+        }
       }
       // Delivered: the wake admission was queued and accepted above.
       if (state.generation === generation) state.retryReason = undefined;
       if (reason === 'publication') {
-        lastPublicationWakeAt.set(sessionID, Date.now());
+        lastPublicationWakeAt.set(sessionID, now());
         boundTrackedMap(lastPublicationWakeAt);
+        acknowledgePendingPublications(sessionID, publicationBatch);
       }
+      accepted = true;
       return true;
     } catch (error) {
       // Only accepted sends consume the cap. Preserve the reservation's
@@ -2291,6 +2726,57 @@ export function createOrchestratorWakeScheduler(
       }
 
       const current = localSessions.get(sessionID);
+      // A committed send deliberately does not release one-flight waiters.
+      // New publication pointers still need a timer under the CURRENT idle
+      // generation, including when their trigger invalidated this flight.
+      if (
+        hasPendingPublications(sessionID) &&
+        current?.continuousIdle &&
+        !disposed &&
+        !isParentActiveByEvents(sessionID)
+      ) {
+        current.retryReason = 'publication';
+        const lastWakeAt = lastPublicationWakeAt.get(sessionID);
+        schedule(
+          sessionID,
+          lastWakeAt === undefined
+            ? intervalMs
+            : Math.max(
+                intervalMs,
+                lastWakeAt + publicationWakeMinIntervalMs - now(),
+              ),
+        );
+      }
+      // The same committed-send rule strands queued deltas: an idle event or
+      // a new delta that arrived during the send bumped the generation and
+      // parked its re-drive as a waiter this release just discarded, and no
+      // further idle is guaranteed. Arm one timer under the CURRENT
+      // generation (a timer controls cadence after a commit, like the
+      // publication retry above): completed-only work waits out the
+      // publication spacing, other deltas the backstop interval. A later
+      // idle or busy event supersedes it; an armed spacing or settle timer
+      // already owns the re-drive.
+      if (
+        accepted &&
+        current &&
+        current.generation !== generation &&
+        current.continuousIdle &&
+        current.timer === undefined &&
+        !disposed &&
+        hasPendingDeltas(sessionID) &&
+        !completedSpacingTimers.has(sessionID) &&
+        !childInputTimers.has(sessionID) &&
+        !isParentActiveByEvents(sessionID)
+      ) {
+        const completedOnly =
+          !pendingStoppedRecoveries.has(sessionID) &&
+          !pendingChildInputWakes.has(sessionID);
+        const spacing = completedOnly
+          ? publicationSpacingRemaining(sessionID)
+          : 0;
+        current.retryReason = 'recovery';
+        schedule(sessionID, spacing > 0 ? spacing : intervalMs);
+      }
       if (
         current?.generation === generation &&
         getWakeProgress(sessionID).stopped
@@ -2395,6 +2881,7 @@ export function createOrchestratorWakeScheduler(
     delta?: string,
     dedupeKey?: string,
     settleDelayMs = 0,
+    fence?: CompletedJobFence,
   ): void {
     if (
       disposed ||
@@ -2406,7 +2893,7 @@ export function createOrchestratorWakeScheduler(
     }
     noteGateSession(sessionID);
     if (delta) {
-      queue.add(sessionID, delta, dedupeKey);
+      queue.add(sessionID, delta, dedupeKey, fence);
     } else if (!queue.batches.has(sessionID)) {
       queue.batches.set(sessionID, {
         deltas: new Map(),
@@ -2427,7 +2914,7 @@ export function createOrchestratorWakeScheduler(
       // Keep the first deadline: duplicates enrich the queued delta, and
       // bursts cannot postpone a genuinely blocked child indefinitely.
       if (childInputTimers.has(sessionID)) return;
-      const timer = setTimeout(() => {
+      const timer = scheduleTimeout(() => {
         childInputTimers.delete(sessionID);
         const batch = queue.batches.get(sessionID);
         if (!batch) return;
@@ -2441,11 +2928,49 @@ export function createOrchestratorWakeScheduler(
       timer.unref?.();
       return;
     }
+    if (queue === completedJobQueue) {
+      // Completed-result pushes honor `publicationWakeMinIntervalMs`: inside
+      // the window the entry stays queued and one deferred re-drive fires
+      // when it elapses, so results coalesce instead of each costing the
+      // parent a separate model turn. Keep the first deadline.
+      const remaining = publicationSpacingRemaining(sessionID);
+      if (remaining > 0) {
+        if (completedSpacingTimers.has(sessionID)) return;
+        log('[orchestrator-wake] completed-job push deferred', {
+          sessionID,
+          trigger: queue.blockerTrigger,
+          verdict: 'deferred',
+          reason: 'throttled',
+          windowMs: publicationWakeMinIntervalMs,
+        });
+        const timer = scheduleTimeout(() => {
+          completedSpacingTimers.delete(sessionID);
+          const batch = queue.batches.get(sessionID);
+          if (!batch) return;
+          if (prunedToEmpty(queue, batch)) {
+            queue.batches.delete(sessionID);
+            return;
+          }
+          triggerDeltaWake(queue, sessionID);
+        }, remaining);
+        completedSpacingTimers.set(sessionID, timer);
+        timer.unref?.();
+        return;
+      }
+    }
     const state = touchLocal(sessionID);
     clearTimer(state);
     bumpGeneration(state);
     state.continuousIdle = true;
     void evaluate(sessionID, state.generation, 'recovery');
+  }
+
+  function hasPendingDeltas(sessionID: string): boolean {
+    return (
+      pendingStoppedRecoveries.has(sessionID) ||
+      pendingCompletedJobs.has(sessionID) ||
+      pendingChildInputWakes.has(sessionID)
+    );
   }
 
   function triggerStoppedJobRecovery(
@@ -2454,6 +2979,32 @@ export function createOrchestratorWakeScheduler(
     dedupeKey?: string,
   ): void {
     triggerDeltaWake(stoppedRecoveryQueue, sessionID, delta, dedupeKey);
+  }
+
+  /**
+   * Queue ONE self-contained result for a terminal publication the host's
+   * native first-publication notifier does not cover (rev>1 completed/error)
+   * and wake the parent through the same bounded delta machinery as
+   * stopped-job recovery.
+   *
+   * Deliberately NOT the terminal-publication wake: that path drops on a busy
+   * parent and on the per-parent throttle, which would silently lose the
+   * result. The push still honors the same per-parent spacing
+   * (`publicationWakeMinIntervalMs`), but by deferring, not dropping: the
+   * delta is durable in the per-parent queue (cap
+   * `COMPLETED_JOB_QUEUE_CAP`, `COMPLETED_JOB_WAKE_CHUNK` per wake) until a
+   * wake actually delivers it; overflow becomes a `task_status` pointer.
+   * Revalidated by `isCompletedJobCurrent` immediately before delivery so a
+   * reopened, re-published, or already-consumed record is never reported
+   * twice.
+   */
+  function triggerCompletedJobPublication(
+    sessionID: string,
+    delta: string,
+    dedupeKey: string,
+    fence: CompletedJobFence,
+  ): void {
+    triggerDeltaWake(completedJobQueue, sessionID, delta, dedupeKey, 0, fence);
   }
 
   /**
@@ -2491,7 +3042,8 @@ export function createOrchestratorWakeScheduler(
     sessionID: string,
     taskID: string,
     generation: number,
-  ): Promise<void> {
+    terminalRevision?: number,
+  ): Promise<boolean> {
     if (
       disposed ||
       !enabled ||
@@ -2499,8 +3051,18 @@ export function createOrchestratorWakeScheduler(
       !capabilities.ready ||
       !canObserveSelection(sessionID)
     ) {
-      return;
+      return false;
     }
+    // Retain the execution until a publication actually lands: this direct
+    // trigger may be throttled, lose the busy race, or fail its SDK send,
+    // and the eventual timer retry must acknowledge the same execution.
+    const publication = {
+      sessionID,
+      taskID,
+      generation,
+      ...(terminalRevision !== undefined ? { terminalRevision } : {}),
+    };
+    retainPendingPublication(publication);
     // Busy parent: native steer already delivered the first completion for
     // this job; a queued wake on top would double-inject.
     if (isParentActiveByEvents(sessionID)) {
@@ -2512,14 +3074,14 @@ export function createOrchestratorWakeScheduler(
         verdict: 'skipped',
         reason: 'parent-busy',
       });
-      return;
+      return false;
     }
-    const now = Date.now();
+    const observedAt = now();
     const lastWakeAt = lastPublicationWakeAt.get(sessionID);
     if (
       lastWakeAt !== undefined &&
       publicationWakeMinIntervalMs > 0 &&
-      now - lastWakeAt < publicationWakeMinIntervalMs
+      observedAt - lastWakeAt < publicationWakeMinIntervalMs
     ) {
       log('[orchestrator-wake] terminal publication wake skipped', {
         sessionID,
@@ -2530,10 +3092,19 @@ export function createOrchestratorWakeScheduler(
         reason: 'throttled',
         windowMs: publicationWakeMinIntervalMs,
       });
-      return;
+      if (capabilities.flavor === 'v2') {
+        const state = touchLocal(sessionID);
+        state.continuousIdle = true;
+        state.retryReason = 'publication';
+        schedule(
+          sessionID,
+          lastWakeAt + publicationWakeMinIntervalMs - observedAt,
+        );
+      }
+      return false;
     }
     if (localSessions.get(sessionID)?.archived) {
-      return;
+      return false;
     }
     const blocker = scheduleBlocker(sessionID, {
       // The fingerprint comparison inside evaluate is the authoritative
@@ -2549,7 +3120,7 @@ export function createOrchestratorWakeScheduler(
         verdict: 'skipped',
         reason: blocker,
       });
-      return;
+      return false;
     }
     // evaluate consumes the throttle on every publication delivery. A
     // suppressed or failed attempt burns nothing; the one-flight gate
@@ -2559,12 +3130,26 @@ export function createOrchestratorWakeScheduler(
     clearTimer(state);
     bumpGeneration(state);
     state.continuousIdle = true;
+    const evaluationGeneration = state.generation;
     const delivered = await evaluate(
       sessionID,
-      state.generation,
+      evaluationGeneration,
       'publication',
     );
-    if (!delivered) return;
+    if (!delivered) {
+      // A concurrent evaluation can consume this attempt. If no lifecycle
+      // event advanced the generation, keep the publication armed so the
+      // shared timer retries it.
+      if (
+        state.generation === evaluationGeneration &&
+        hasPendingPublications(sessionID)
+      ) {
+        state.retryReason = 'publication';
+        state.continuousIdle = true;
+        schedule(sessionID);
+      }
+      return false;
+    }
     log('[orchestrator-wake] terminal publication wake', {
       sessionID,
       taskID,
@@ -2572,6 +3157,7 @@ export function createOrchestratorWakeScheduler(
       trigger: 'terminal-publication',
       verdict: 'waking',
     });
+    return true;
   }
 
   /**
@@ -2643,8 +3229,13 @@ export function createOrchestratorWakeScheduler(
       for (const parentID of childInputTimers.keys()) {
         clearChildInputTimer(parentID);
       }
+      for (const parentID of completedSpacingTimers.keys()) {
+        clearCompletedSpacingTimer(parentID);
+      }
       pendingStoppedRecoveries.clear();
+      pendingCompletedJobs.clear();
       lastPublicationWakeAt.clear();
+      pendingPublications.clear();
       pendingChildInputWakes.clear();
       reportedScheduleBlockers.clear();
       lastStatusBySession.clear();
@@ -2722,6 +3313,12 @@ export function createOrchestratorWakeScheduler(
     if (type === 'session.deleted') {
       forgetSessionEvents(sessionID);
       clearSession(sessionID);
+      for (const [parentID, pending] of pendingPublications) {
+        for (const [key, fact] of pending) {
+          if (fact.taskID === sessionID) pending.delete(key);
+        }
+        if (pending.size === 0) pendingPublications.delete(parentID);
+      }
       return;
     }
 
@@ -2743,6 +3340,14 @@ export function createOrchestratorWakeScheduler(
           }
           return;
         }
+        if (pendingCompletedJobs.has(sessionID)) {
+          if (localSessions.get(sessionID)?.archived) {
+            beginContinuousIdle(sessionID);
+          } else {
+            triggerDeltaWake(completedJobQueue, sessionID);
+          }
+          return;
+        }
         if (pendingChildInputWakes.has(sessionID)) {
           if (localSessions.get(sessionID)?.archived) {
             beginContinuousIdle(sessionID);
@@ -2750,6 +3355,10 @@ export function createOrchestratorWakeScheduler(
             triggerChildInputWaitWake(sessionID);
           }
           return;
+        }
+        if (hasPendingPublications(sessionID)) {
+          const state = touchLocal(sessionID);
+          state.retryReason = 'publication';
         }
         beginContinuousIdle(sessionID);
       }
@@ -2789,8 +3398,19 @@ export function createOrchestratorWakeScheduler(
     event,
     observeChatMessage,
     triggerStoppedJobRecovery,
+    triggerCompletedJobPublication,
     triggerTerminalPublicationWake,
     triggerChildInputWaitWake,
+    /** Whether a completed-job push for this exact run is still queued and
+     * undelivered (the stale-timestamp fallback must not ack it first). */
+    hasPendingCompletedPush: (
+      sessionID: string,
+      taskID: string,
+      generation: number,
+    ): boolean =>
+      completedJobQueue.batches
+        .get(sessionID)
+        ?.deltas.has(`${taskID}:${generation}`) === true,
     /** Clear timers when wait_for_user or fallback begins. */
     suppress,
     /** Test seam */

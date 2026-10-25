@@ -108,7 +108,7 @@ Once the routing decision and target model are determined:
 
 ### Local integration takes precedence over upstream execution recipes
 
-The subskills are complete, unmodified upstream snapshots (including every script, recipe, reference and license). Use them for prompting and model guidance. For this plugin, always call the two tools above: do not switch to upstream Python CLIs, the Interactions API, upstream output folders, or video generation. Nano uses Gemini native `:generateContent`, multimodal `parts`, and inline image outputs; OpenAI uses its separate Images API.
+The subskills are adapted upstream references, not complete or unmodified snapshots. Original provenance and source hashes are retained in `upstreams.json`; third-party licenses and attribution remain alongside the references. Standalone installers, publishing material and unused execution scripts have been removed. Always call the two direct built-in tools above, never `execute`, Python CLIs, SDK runners, the Interactions API, upstream output folders, or video generation. Nano uses Gemini native `:generateContent`, multimodal `parts`, and inline image outputs; OpenAI uses its separate Images API. These implementations are compiled into OpenCode and do not download plugins at runtime.
 
 `num_last_images_to_include` selects 0–5 local images from the current OpenCode conversation, not the latest files from other sessions. `session_id` on Nano reuses the preceding generated image and thought signature in the same workspace/model/conversation; continuity is in memory and resets on plugin restart. Use explicit references to resume after restart. Legacy OpenAI canvas ratios may be approximate; newer presets use 16-pixel boundaries.
 

@@ -2,8 +2,10 @@
   "openai": {
     "repository": "https://github.com/openai/skills.git",
     "directory": "skills/.system/imagegen",
-    "commit": "49f948faa9258a0c61caceaf225e179651397431",
-    "files": {
+    "commit": "e6afb0d74cc75d220df2faf3dd6c635c2dc6a108",
+    "adaptation": "Adapted for compiled-in direct image_gen. Standalone CLI script and CLI/network recipes removed; skills and prompting/API references edited. original_files records upstream source hashes, not current bundled file checksums.",
+    "verification": "All 11 original_files SHA-256 hashes recomputed from this commit match 49f948faa9258a0c61caceaf225e179651397431 byte-for-byte; both revisions use skills/.system/imagegen. No model, API, prompting or example changes to merge; local direct-tool adaptations remain in place.",
+    "original_files": {
       "agents/openai.yaml": "fafccbf7ded0d78be24c7dc1c0a2e0ac1bbf27bfd13a1fed969da643d973826a",
       "assets/imagegen-small.svg": "cff5f34f57ff60b3ee92eaedd17b15e96dd4b9e776df3e78936c9e00d42be294",
       "assets/imagegen.png": "95952f644064eb9e890f98d8db07216347186526e4c41ad66d3420629eb86e20",
@@ -21,7 +23,9 @@
     "repository": "https://github.com/AntonioCardenas/generate-nanobanana.git",
     "directory": ".",
     "commit": "725d003705b432a9ee8ffeb209a48aeb149c019b",
-    "files": {
+    "adaptation": "Adapted for compiled-in direct image_gen_nano. Standalone package, install/update instructions, Python/Interactions API and video execution removed; model guidance retained and adapted. original_files records upstream source hashes, not current bundled file checksums.",
+    "verification": "Upstream main resolved to this same commit on 2026-10-25. All 14 original_files SHA-256 hashes recomputed and matched; retained model, reference-continuity and failure guidance reviewed against this pin. No newer upstream technical changes to merge; local direct-tool adaptations remain in place.",
+    "original_files": {
       ".gitignore": "cf237c7aff44efbe6e502e645c3e06da03a69d7bdeb43392108ef3348143417e",
       "CODE_OF_CONDUCT.md": "8b3dc743993f08c0208280eaade0f94bab16e18274e5c5b47f61441581549d76",
       "CONTRIBUTING.md": "e993a89379397ad387002c3065bdfa541f00702e57e71c46533556b5b873cfee",

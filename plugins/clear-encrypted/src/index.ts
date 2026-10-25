@@ -4,6 +4,7 @@ import { access, readdir, realpath, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import type { CommandEditor } from "@opencode/plugin/promise/command"
 import { definition, id, reasons, safeReason, type ClearResult } from "./rpc"
 
 type Location = { directory: string; workspaceID?: string }
@@ -17,6 +18,7 @@ export interface ServerContext {
     wait(input: { sessionID: string }, options?: { signal: AbortSignal }): Promise<unknown>
   }
   rpc: { register(schema: typeof definition, handlers: { clear(input: unknown, call: Call): Promise<unknown> }): Promise<unknown> }
+  command: { transform(edit: (editor: CommandEditor) => void): Promise<unknown> }
 }
 type Target = { dbPath: string; bun: string }
 type HelperInput = { operation: "clear"; sessionID: string; directory: string; dbPath: string }
@@ -160,53 +162,72 @@ function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 export async function setupServer(ctx: ServerContext, deps: Dependencies = { target: resolveTarget, helper: runHelper, timeout: 60_000 }) {
-  if (typeof ctx?.rpc?.register !== "function") throw new Error(reasons.compatibility)
+  if (typeof ctx?.rpc?.register !== "function" || typeof ctx?.command?.transform !== "function") throw new Error(reasons.compatibility)
   const pending = new Set<string>()
-  await ctx.rpc.register(definition, {
-    async clear(input, call) {
-      if (!input || typeof input !== "object" || Object.keys(input).length !== 1 || !("sessionID" in input)
-        || typeof input.sessionID !== "string" || !input.sessionID.trim()) return call.error("failed", reasons.location, null)
-      const sessionID = input.sessionID
-      // Check ALL stop/settlement capabilities before any session can be interrupted.
-      if (typeof ctx.session?.get !== "function" || typeof ctx.session?.interrupt !== "function"
-        || typeof ctx.session?.wait !== "function") return call.error("failed", reasons.compatibility, null)
-      if (typeof ctx.app?.channel !== "string" || !ctx.app.channel.trim()) return call.error("failed", reasons.database, null)
-      const location = ctx.location
-      if (typeof location?.directory !== "string" || !path.isAbsolute(location.directory)
-        || typeof location.project?.id !== "string" || !location.project.id.trim()
-        || (location.workspaceID !== undefined && (typeof location.workspaceID !== "string" || !location.workspaceID.trim())))
-        return call.error("failed", reasons.location, null)
-      const { directory, workspaceID, project: { id: projectID } } = location
-      if (pending.has(sessionID)) return call.error("failed", reasons.busy, null)
-      pending.add(sessionID)
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), deps.timeout)
-      const signal = AbortSignal.any([call.signal, controller.signal])
+  // Both public entry points share this guard and pending set. No caller can
+  // supply a database path, and command text is never sent to session.prompt.
+  const clear = async (input: unknown, cancellation?: AbortSignal): Promise<ClearResult> => {
+    if (!input || typeof input !== "object" || Object.keys(input).length !== 1 || !("sessionID" in input)
+      || typeof input.sessionID !== "string" || !input.sessionID.trim()) throw new Error(reasons.location)
+    const sessionID = input.sessionID
+    // Check ALL stop/settlement capabilities before any session can be interrupted.
+    if (typeof ctx.session?.get !== "function" || typeof ctx.session?.interrupt !== "function"
+      || typeof ctx.session?.wait !== "function") throw new Error(reasons.compatibility)
+    if (typeof ctx.app?.channel !== "string" || !ctx.app.channel.trim()) throw new Error(reasons.database)
+    const location = ctx.location
+    if (typeof location?.directory !== "string" || !path.isAbsolute(location.directory)
+      || typeof location.project?.id !== "string" || !location.project.id.trim()
+      || (location.workspaceID !== undefined && (typeof location.workspaceID !== "string" || !location.workspaceID.trim())))
+      throw new Error(reasons.location)
+    const { directory, workspaceID, project: { id: projectID } } = location
+    if (pending.has(sessionID)) throw new Error(reasons.busy)
+    pending.add(sessionID)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), deps.timeout)
+    const signal = cancellation ? AbortSignal.any([cancellation, controller.signal]) : controller.signal
+    try {
+      signal.throwIfAborted()
+      const target = await bounded(deps.target(ctx.app.channel), signal)
+      const session = await bounded(ctx.session.get({ sessionID }, { signal }), signal)
+      if (session?.id !== sessionID || session.projectID !== projectID
+        || session.location?.directory !== directory
+        || session.location.workspaceID !== workspaceID) throw new Error(reasons.location)
       try {
         signal.throwIfAborted()
-        const target = await bounded(deps.target(ctx.app.channel), signal)
-        const session = await bounded(ctx.session.get({ sessionID }, { signal }), signal)
-        if (session?.id !== sessionID || session.projectID !== projectID
-          || session.location?.directory !== directory
-          || session.location.workspaceID !== workspaceID) throw new Error(reasons.location)
-        try {
-          signal.throwIfAborted()
-          await bounded(ctx.session.interrupt({ sessionID, resume: false }, { signal }), signal)
-          signal.throwIfAborted()
-          await bounded(ctx.session.wait({ sessionID }, { signal }), signal)
-          signal.throwIfAborted()
-        } catch { throw new Error(reasons.stopped) }
-        // No await between final abort check and helper launch. The helper independently
-        // rechecks durable idle/location/identity inside its write transaction.
-        return await deps.helper({ operation: "clear", sessionID, directory,
-          dbPath: target.dbPath }, target.bun, signal)
-      } catch (error) {
-        return call.error("failed", safeReason(error), null)
-      } finally {
-        clearTimeout(timer)
-        pending.delete(sessionID)
-      }
+        await bounded(ctx.session.interrupt({ sessionID, resume: false }, { signal }), signal)
+        signal.throwIfAborted()
+        await bounded(ctx.session.wait({ sessionID }, { signal }), signal)
+        signal.throwIfAborted()
+      } catch { throw new Error(reasons.stopped) }
+      // No await between final abort check and helper launch. The helper independently
+      // rechecks durable idle/location/identity inside its write transaction.
+      return await deps.helper({ operation: "clear", sessionID, directory,
+        dbPath: target.dbPath }, target.bun, signal)
+    } catch (error) {
+      throw new Error(safeReason(error))
+    } finally {
+      clearTimeout(timer)
+      pending.delete(sessionID)
+    }
+  }
+  await ctx.rpc.register(definition, {
+    async clear(input, call) {
+      try { return await clear(input, call.signal) }
+      catch (error) { return call.error("failed", safeReason(error), null) }
     },
+  })
+  await ctx.command.transform((editor) => {
+    editor.add({
+      name: id,
+      description: "清理当前会话的加密推理上下文，保留聊天记录（不接受参数或附件）",
+      async execute(input) {
+        if (input.prompt.text.trim() || input.prompt.files?.length || input.prompt.agents?.length || input.prompt.skills?.length)
+          throw new Error(reasons.arguments)
+        // V2 CommandInvocation has no AbortSignal. The shared guard still owns
+        // its timeout; RPC callers additionally provide their cancellation signal.
+        await clear({ sessionID: input.sessionID })
+      },
+    })
   })
 }
 

@@ -15,6 +15,8 @@ const output = required("QOL_OUTPUT_ROOT")
 const repository = required("QOL_REPOSITORY")
 const modules = required("QOL_NODE_MODULES")
 const graph = path.join(source, "packages/core/src/plugin/qol")
+// AST rewriting uses the official workspace's TypeScript 6 alias/API. The root
+// TypeScript 7 build dependency is CLI-only and is not this parser's provider.
 const ts = createRequire(path.join(source, "package.json"))("typescript")
 async function writable(directory) {
   await fs.chmod(directory, (await fs.stat(directory)).mode | 0o200)
@@ -39,9 +41,10 @@ await fs.mkdir(path.join(assets, "plugins"), { recursive: true })
 // importNpmLock.buildNodeModules exposes node_modules below its output root.
 await copy(path.join(modules, "node_modules"), path.join(assets, "node_modules"))
 await copy(path.join(repository, "vendor"), path.join(assets, "vendor"))
-for (const name of ["image", "session-reader", "clear-encrypted", "desktop-bridge"]) {
+for (const name of ["image", "session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp"]) {
   await copy(path.join(repository, "plugins", name), path.join(assets, "plugins", name))
 }
+await fs.copyFile(required("QOL_MCP_SERVERS_CONFIG"), path.join(assets, "plugins/bundled-mcp/servers.json"))
 for (const [name, variable] of [
   ["gpt-taste", "QOL_GPT_TASTE"],
   ["model-policy", "QOL_MODEL_POLICY"],
@@ -60,6 +63,14 @@ await fs.symlink(required("QOL_AST_GREP"), sg)
 // normalization, user/project precedence and environment overrides.
 const omo = path.join(assets, "vendor/oh-my-opencode-slim")
 const billion = path.join(assets, "vendor/billion-context")
+// Prefer the Nix-backed package executable to a mutable user-cache binary.
+// Missing/incompatible packaged tools must fail locally, never fetch an ELF.
+await replaceOnce(path.join(omo, "src/tools/ast-grep/constants.ts"),
+  "  const cachedPath = getCachedBinaryPath();\n" +
+  "  if (cachedPath && isValidBinary(cachedPath)) {\n    return cachedPath;\n  }\n\n", "")
+await replaceOnce(path.join(omo, "src/tools/ast-grep/downloader.ts"),
+  "  const version = getAstGrepVersion();\n  return downloadAstGrep(version);",
+  '  throw new Error("Nix-provided ast-grep is unavailable; rebuild opencode-qol instead of downloading a binary");')
 const pinnedSources = JSON.parse(await fs.readFile(path.join(assets, "vendor/sources.json"), "utf8"))
 for (const [directory, name] of [[omo, "oh-my-opencode-slim"], [billion, "billion-context"]]) {
   const pkg = JSON.parse(await fs.readFile(path.join(directory, "package.json"), "utf8"))
@@ -136,9 +147,26 @@ async function legacyToolOnly(directory) {
 }
 await legacyToolOnly(path.join(omo, "src"))
 
-// Zod's exact versions are independent of host SDK identity. Billion's lazy V1
-// schema import must keep its upstream 4.1.8, rather than personal/OMO's 4.6.7.
+// Keep Billion's lazy V1 schema import physically separate from the host/OMO
+// Zod module, even when both use the same current stable version.
 await copy(path.join(assets, "node_modules/@opencode-qol/bili-zod"), path.join(billion, "node_modules/zod"))
+
+// Undici 8 dispatchers require its new request-handler API; Node 24's builtin
+// fetch still uses Undici 7. Pair dispatcher-bearing server egress with the
+// matching fetch implementation without changing the host's global fetch or
+// native plugin interception. Keep all overrides in readable staging source.
+await replaceOnce(path.join(billion, "src/fetch-util.ts"),
+  'import { Agent } from "undici";', 'import { Agent, fetch } from "undici";')
+for (const [entry, anchor] of [
+  ["src/cache-keepalive.ts", 'import { peekSession } from "./session.js";'],
+  ["src/advisory.ts", 'import path from "node:path";'],
+  ["src/update-notes.ts", 'import path from "node:path";'],
+  ["src/update-policy.ts", 'import path from "node:path";'],
+  ["src/update.ts", 'import path from "node:path";'],
+  ["src/storage/engine-bootstrap.ts", 'import path from "node:path";'],
+]) {
+  await replaceOnce(path.join(billion, entry), anchor, `${anchor}\nimport { fetch } from "undici";`)
+}
 
 const run = (command, args, cwd) => execFileSync(command, args, {
   cwd, stdio: "inherit", env: process.env,
@@ -166,7 +194,7 @@ for (const [subdirectory, name] of [["kernel", "acp-kernel"], ["pi-subagents", "
 run(process.execPath, [tsupCli], billion)
 run(process.execPath, ["scripts/write-build-info.mjs"], billion)
 run(process.execPath, ["scripts/check-dist-import-annotations.mjs"], billion)
-run(process.execPath, ["scripts/check-dist-external-zod.mjs"], billion)
+run(process.execPath, ["scripts/check-dist-external.mjs"], billion)
 
 // Legacy V1 SDK/Effect are transitive build inputs for the official tool helper,
 // never installed host runtimes. It is now bundled; retain no duplicate SDK or
@@ -224,6 +252,7 @@ await rebase(assets)
 await copy(assets, graph)
 await fs.copyFile(path.join(repository, "src/builtin.ts"), path.join(graph, "builtin.ts"))
 await fs.copyFile(path.join(repository, "src/native-pty.ts"), path.join(graph, "native-pty.ts"))
+await copy(path.join(repository, "src/native-pty"), path.join(graph, "native-pty"))
 
 // Use the host workspace SDK and Effect identity in the compiled graph, never a
 // second npm SDK/Effect instance. Runtime subprocess dependencies stay untouched

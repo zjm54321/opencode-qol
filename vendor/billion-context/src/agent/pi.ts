@@ -14,7 +14,7 @@ import { disposeSubagentSelfReg, selfRegisterForSession, type SubagentSelfRegSta
 import { isModelApiUrl, nativeInterceptInstalled } from "./native-intercept.js";
 import { wirePiSubagents } from "./pi-subagents.js";
 import { wireToolGuardrails } from "./tool-guardrails.js";
-import { clearIncrementalProbe, INCREMENTAL_TURN_MARKER_HEADER, incrementalEnvelopeConversationId, noteIncrementalRejection, noteIncrementalAck, planIncrementalTurn, probeIncrementalTurns, sweepStale, type IncrementalWireMessage } from "./incremental-client.js";
+import { clearIncrementalProbe, INCREMENTAL_TURN_MARKER_HEADER, incrementalEnvelopeConversationId, incrementalWireHash, noteIncrementalRejection, noteIncrementalAck, planIncrementalTurn, probeIncrementalTurns, pullIncrementalReceipt, sweepStale, type IncrementalWireMessage } from "./incremental-client.js";
 import type { DirectSendPrep } from "./native-intercept.js";
 import { asciiHeaderValue, detectProxyBase, destinationRoutedThroughProxy, fetchManifest, forwardTool, fetchStatus, fetchProxyVersion, postIdentityRegister, reportRuntimeInfoOnChange, armedIdleNotice, noSessionWarning, nonHttpProvidersFromEnv, type ForwardedToolResult, type ManifestTool } from "./shared.js";
 import { createForkAdopter } from "./fork-adopt.js";
@@ -99,6 +99,12 @@ type ExtensionAPI = {
     // #2322: current session name (pi /name); optional because older hosts
     // lack it (the session_info_changed event is the primary channel).
     getSessionName?: () => string | undefined;
+    // #3542: the ACTIVE tool loadout — the set pi declares to the model and
+    // its dispatcher checks, distinct from the registry (getAllTools). pi's
+    // /tree rewind resets it from the transcript, so a registered tool can be
+    // missing from it; optional because older hosts lack it.
+    getActiveTools?: () => string[];
+    setActiveTools?: (toolNames: string[]) => void;
 };
 
 function agentName(override: string | undefined): string {
@@ -657,6 +663,42 @@ function reassertDroppedTools(pi: ExtensionAPI, state: RegisterState, agent: str
     if (missing.length === 0) return;
     logHostEvent("warn", "[native-client]", `bili-plugin(${agent}): ${missing.length} bili tool(s) dropped from the host registry (${missing.join(", ")}) — re-registering (#2708)`);
     for (const t of tools) pi.registerTool(manifestToTool(proxyBase, t, agent));
+}
+
+// #3542: a pi /tree rewind (navigateTree) resets the ACTIVE tool loadout to what
+// the surviving transcript system entries declare (_restoreToolsFromTranscript),
+// discarding the entry that declared our tools whenever it sits after the rewind
+// target — the normal case, since the manifest handshake is async and lands after
+// the first turn's declaration. The definitions stay in the registry, so #2708's
+// probe sees nothing missing, but pi dispatches on the loadout: every later call
+// fails with "Tool X not found" until restart. session_tree fires right after the
+// reset and before the next _startRun, so re-assert there. Additive-only (names
+// the host currently holds are never removed), mirroring pi's own reload()
+// precedent of re-activating all extension tools. No loadout query/setter (older
+// pi / omp) or a throwing query → no-op, never a blind set.
+function reassertLoadoutAfterTree(pi: ExtensionAPI, state: RegisterState, agent: string): void {
+    const tools = state.registeredTools;
+    if (tools === undefined || tools.length === 0) return;
+    const getActive = pi.getActiveTools;
+    const setActive = pi.setActiveTools;
+    if (typeof getActive !== "function" || typeof setActive !== "function") return;
+    let active: string[];
+    try {
+        const names = getActive.call(pi);
+        if (!Array.isArray(names)) return;
+        active = names.filter((n): n is string => typeof n === "string");
+    } catch {
+        return; // stale ctx — same guard as reassertDroppedTools
+    }
+    const present = new Set(active);
+    const missing = tools.map((t) => t.name).filter((name) => !present.has(name));
+    if (missing.length === 0) return;
+    try {
+        setActive.call(pi, [...active, ...missing]);
+    } catch {
+        return; // setter rejected — never break the navigation
+    }
+    logHostEvent("warn", "[native-client]", `bili-plugin(${agent}): ${missing.length} bili tool(s) dropped from the active loadout by a tree navigation (${missing.join(", ")}) — re-asserting (#3542)`);
 }
 
 async function registerTools(pi: ExtensionAPI, ctx: Ctx, state: RegisterState, agent: string, awaitNativeOrigin = true): Promise<void> {
@@ -1297,6 +1339,25 @@ export function createBiliPlugin(agentOverride?: string, opts?: { retryIntervalM
             if (proxyBase === undefined) proxyBase = await awaitNativeProxyOrigin();
             if (proxyBase === undefined) return undefined;
             if (!(await probeIncrementalTurns(proxyBase))) return undefined;
+            // #4352: the response-header ack channel is transport-dependent —
+            // pi's after_provider_response only exposes headers for some
+            // provider transports, and a missed ack makes EVERY next turn
+            // re-seed the full history (the 2026-10-22 incident: turn 2 sent
+            // sinceSeq=0 again). Before planning, reconcile any still-pending
+            // un-acked turn by PULLING the lane's receipt and adopting it only
+            // when the boundary hash proves the canonical absorbed OUR last
+            // message — never on mere seq progress (a foreign full-resend can
+            // advance the canonical too).
+            const pendingAck = pendingIncrementalAcks.get(sid);
+            if (pendingAck !== undefined && pendingAck.messages.length > 0) {
+                const receipt = await pullIncrementalReceipt(proxyBase, sid);
+                const expected = incrementalWireHash(pendingAck.messages[pendingAck.messages.length - 1]);
+                if (receipt !== null && receipt.appliedSeq > 0 && receipt.boundary === expected) {
+                    pendingIncrementalAcks.delete(sid);
+                    piIncrementalOriginals.delete(sid);
+                    noteIncrementalAck(sid, receipt.appliedSeq, pendingAck.messages, pendingAck.system);
+                }
+            }
             const plan = planIncrementalTurn({
                 conversationId: sid,
                 // The marker divert uses the ORIGINAL request URL server-side;
@@ -1499,6 +1560,9 @@ export function createBiliPlugin(agentOverride?: string, opts?: { retryIntervalM
         pi.on("session_shutdown", () => {
             disposeSubagentSelfReg(subagentReg);
         });
+        // #3542: a /tree rewind resets the active loadout from the transcript —
+        // re-assert ours right after the reset (see reassertLoadoutAfterTree).
+        pi.on("session_tree", () => reassertLoadoutAfterTree(pi, state, agent));
         // omp fires session_compact on in-session native compaction (sid does
         // not rotate), so the proxy reuses stale state — notify it to archive
         // the now-unreachable blocks (#395). Fire-and-forget: a failed

@@ -3,7 +3,6 @@ import type {
   BackgroundJobBoard,
   BackgroundJobLaunchInput,
   BackgroundJobLease,
-  BackgroundJobPromptMetadata,
   BackgroundJobRecord,
   BackgroundJobStatusInput,
   BackgroundJobTerminalInput,
@@ -203,6 +202,16 @@ export class BackgroundJobCoordinator implements BackgroundJobStore {
     replaced: BackgroundJobRecord,
   ): boolean {
     return this.board.abandonLaunch(launched, replaced);
+  }
+
+  correctStartupRecoveredTerminal(input: {
+    taskID: string;
+    generation: number;
+    state: 'completed' | 'error' | 'cancelled' | 'stopped';
+    resultSummary?: string;
+    now?: number;
+  }): BackgroundJobRecord | undefined {
+    return this.board.correctStartupRecoveredTerminal(input);
   }
 
   restoreRetainedSession(
@@ -461,20 +470,6 @@ export class BackgroundJobCoordinator implements BackgroundJobStore {
 
   hasConvergenceSignals(taskID: string, threshold = 3): boolean {
     return this.board.hasConvergenceSignals(taskID, threshold);
-  }
-
-  formatForPrompt(
-    parentSessionID: string,
-    now = Date.now(),
-  ): string | undefined {
-    return this.board.formatForPrompt(parentSessionID, now);
-  }
-
-  formatForPromptWithMetadata(
-    parentSessionID: string,
-    now = Date.now(),
-  ): BackgroundJobPromptMetadata | undefined {
-    return this.board.formatForPromptWithMetadata(parentSessionID, now);
   }
 
   clearParent(parentSessionID: string): void {

@@ -1,7 +1,12 @@
 {
-  "$schema": "https://unpkg.com/oh-my-opencode-slim@3.0.5/oh-my-opencode-slim.schema.json",
+  "$schema": "https://unpkg.com/oh-my-opencode-slim@3.0.6/oh-my-opencode-slim.schema.json",
   "autoUpdate": false,
   "disabled_agents": ["observer"],
+  "agents": {
+    "explorer": {
+      "mcps": ["context7", "gh_grep", "codegraph", "nixos"]
+    }
+  },
   "companion": {
     "enabled": false
   },

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { getConfig, type ImageEngineConfig } from "./config.js";
 import { BUILTIN_MODEL_PRESETS } from "./presets.js";
-import { errorResult, readImage, saveImage, preview, imageMimeTypes } from "./images.js";
+import { errorResult, imageFailure, imageResult, readImage, saveImage, imageMimeTypes, type ImageResult } from "./images.js";
 
 export interface ImageGenNanoArgs {
   prompt: string;
@@ -21,7 +21,8 @@ export async function executeNanoBananaImageGen(
   args: ImageGenNanoArgs,
   workspaceDir: string = process.cwd(),
   options: { config?: ImageEngineConfig; signal?: AbortSignal } = {},
-): Promise<string> {
+): Promise<ImageResult> {
+  options.signal?.throwIfAborted();
   const config = options.config ?? getConfig().nanobanana;
   if (config.enabled === false) return errorResult("PROVIDER_DISABLED", "Nano Banana image generation is disabled.");
   const model = args.model || config.default_model || "gemini-3.1-flash-image";
@@ -80,16 +81,22 @@ export async function executeNanoBananaImageGen(
     if (!response.ok) return errorResult(`HTTP_${response.status}`, `Gemini Nano Banana API error: ${await response.text()}`);
     const data: any = await response.json();
     const outputParts: any[] = data.candidates?.[0]?.content?.parts || [];
-    const imagePart = [...outputParts].reverse().find(part => !part.thought && part.inlineData?.data && Object.values(imageMimeTypes).includes(part.inlineData.mimeType));
-    if (!imagePart) return errorResult("EMPTY_RESULT", "No inline image data found in Gemini response parts.");
-    const relative = await saveImage(workspaceDir, "nano", imagePart.inlineData.data, imagePart.inlineData.mimeType);
+    const images = outputParts.filter(part => !part.thought && part.inlineData?.data && Object.values(imageMimeTypes).includes(part.inlineData.mimeType));
+    if (!images.length) return errorResult("EMPTY_RESULT", "No inline image data found in Gemini response parts.");
+    const files: string[] = [];
+    for (const image of images) {
+      options.signal?.throwIfAborted();
+      files.push(await saveImage(workspaceDir, "nano", image.inlineData.data, image.inlineData.mimeType));
+    }
+    const imagePart = images[images.length - 1];
+    const relative = files[files.length - 1];
     if (args.session_id) {
       sessions.delete(key);
       sessions.set(key, { prompt: args.prompt, image: relative, signature: imagePart.thoughtSignature });
       if (sessions.size > 100) sessions.delete(sessions.keys().next().value!);
     }
-    return preview(relative);
+    return imageResult(files, model, aspectRatio, Boolean(previous || args.referenced_image_paths?.length));
   } catch (error) {
-    return errorResult("EXECUTION_EXCEPTION", error instanceof Error ? error.message : String(error));
+    return imageFailure(error, options.signal, config.apiKey);
   }
 }

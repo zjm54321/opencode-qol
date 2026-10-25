@@ -10,6 +10,7 @@ import { durableMessageToolPaths, withDurableProtection } from "./durable-messag
 import type { AnonymousProvenance } from "./anon-provenance.js";
 import type { WireProtocol } from "./util.js";
 import type { InboundSlot, SeamSlot } from "./cache-ledger.js";
+import { isResponsesTurnSeparatorId } from "./turn-separator.js";
 
 export type BlockView = { text: string; count: number };
 
@@ -335,6 +336,16 @@ export type Session = {
          *  usage report (one-shot, per the #554 contract) and on compression
          *  reset. Absent on legacy session files → treated as no arm. */
         overflowArmTokens?: number;
+        /** #3450: completion-channel reservation PROVEN by an upstream-stated
+         *  overflow ("N in the completion" billed against the same wall) —
+         *  preflight folds against window − reserve because the foldable
+         *  quantity is MESSAGES. Set alongside the overflow arm; cleared on
+         *  native-compaction reset like the arm itself. Absent/zero → no
+         *  reservation (legacy behavior). */
+        overflowArmCompletionReserve?: number;
+        /** #3450: one-time mismatch warning already emitted for this session
+         *  (upstream-stated window ≠ window in use). Provenance only. */
+        overflowArmMismatchWarned?: boolean;
         /** Tokens compressed THIS turn whose fold has not yet materialized in
          *  an upstream usage report (the post-compress re-request re-sends the
          *  UNFOLDED history for prefix-cache reasons, so its usage report
@@ -828,6 +839,25 @@ let MAX_SESSIONS = knobMaxSessions();
 let MAX_RESIDENT_BYTES = sessionResidentMaxBytes();
 const residentWeights = new WeakMap<Session, { revision: number; bytes: number }>();
 
+// #3918: last-known LIVE weight of evicted sessions, stamped at eviction time.
+// The live weight (transient message caches included) is only measurable while
+// the object is resident — a disk reload carries persisted state alone and
+// under-measures by exactly the mass that made the eviction necessary. The map
+// is advisory (it only shapes refusal wording), never load-bearing; bounded so
+// a long-lived process cannot accumulate unbounded entries.
+const evictedWeights = new Map<string, number>();
+const EVICTED_WEIGHT_CAP = 256;
+
+function stampEvictedWeight(id: string, bytes: number): void {
+    if (evictedWeights.has(id)) evictedWeights.delete(id);
+    evictedWeights.set(id, bytes);
+    while (evictedWeights.size > EVICTED_WEIGHT_CAP) {
+        const oldest = evictedWeights.keys().next().value;
+        if (oldest === undefined) break;
+        evictedWeights.delete(oldest);
+    }
+}
+
 /** Estimate retained objects without serializing a second giant copy. Include
  * originals and last-message caches; counting files alone misses both. */
 function deepSizeOf(value: unknown): number {
@@ -928,6 +958,42 @@ function residentBytes(): number {
     let bytes = 0;
     for (const session of sessions.values()) bytes += sessionWeight(session);
     return bytes;
+}
+
+/** #3918: can this session's message view survive BETWEEN model requests? The
+ * empty-view compress refusal (#3126) self-heals on the next model request ONLY
+ * when the reloaded session stays resident afterwards. When the session's
+ * last-known live weight plus the other residents exceeds the byte budget,
+ * every request cycle ends with it evicted again (releaseInFlight discharge)
+ * and the refusal repeats identically forever — the incident's 444 MiB image
+ * session ping-ponged against an 87.5 MiB peer under the 512 MiB default.
+ * Returns the measured pressure so the refusal receipt says so plainly instead
+ * of promising a heal that will not come. */
+interface ResidentPressure {
+    /** True when retrying cannot restore a usable view under the CURRENT pool state. */
+    permanent: boolean;
+    /** Last-known LIVE weight of this session (eviction-time measurement; falls
+     * back to its resident weight when it is resident now). Undefined = unknown. */
+    weightBytes?: number;
+    /** Resident bytes held by all OTHER sessions (this one excluded). */
+    otherBytes: number;
+    residentBytes: number;
+    budgetBytes: number;
+}
+
+export function residentPressure(id: string): ResidentPressure {
+    const resident = sessions.get(id);
+    const self = resident ? sessionWeight(resident) : 0;
+    const total = residentBytes();
+    const known = evictedWeights.get(id);
+    const weightBytes = known !== undefined ? Math.max(known, self) : resident ? self : undefined;
+    return {
+        permanent: weightBytes !== undefined && weightBytes + (total - self) > MAX_RESIDENT_BYTES,
+        weightBytes,
+        otherBytes: total - self,
+        residentBytes: total,
+        budgetBytes: MAX_RESIDENT_BYTES,
+    };
 }
 
 function makeResidentRoom(incoming = 0): void {
@@ -1247,6 +1313,11 @@ export function resetSessionCompression(session: Session): void {
     // longer bounds this session; drop it so the guard falls back to the
     // declared window instead of clamping to a stale ceiling.
     delete session.stats.overflowArmTokens;
+    // #3450: same boundary — the proven completion reservation described the
+    // pre-compaction payload lineage, and the rebuilt conversation re-arms the
+    // one-time mismatch warning.
+    delete session.stats.overflowArmCompletionReserve;
+    delete session.stats.overflowArmMismatchWarned;
     // #728: the pre-compaction outbound payload is gone — the old estimate
     // (measured against the pre-compaction wire) would read high and blind
     // the nudge fallback early; let the next prepare* re-measure.
@@ -1551,42 +1622,11 @@ export function foldCoverage(
     return matched < coveredBefore.size ? { expected: coveredBefore.size, matched } : null;
 }
 
-/** #2627: bili-synthesized Responses turn separators (repairResponsesAssistantOrdering,
- *  src/server.ts) are OUTBOUND-ONLY ordering markers — no client's resent history
- *  ever contains them, so they can never anchor or be covered. When a
- *  separator-bearing view reached applyCompression (the plugin lane handed its
- *  processed view straight in), their ids were registered into new blocks'
- *  direct/effectiveMessageIds and inherited by higher folds via child merge —
- *  permanently "missing" on every reconcile pass: false [acp-drift]/fold-
- *  reconcile warns and stalled per-block ledger evidence against an unchanged
- *  history. They are protocol-ordering artifacts, not compressible raw history:
- *  exclude them everywhere coverage is stored or compared. */
-export const RESPONSES_TURN_SEPARATOR_ID_PREFIX = "acp_turn_sep_";
-
-export function isResponsesTurnSeparatorId(id: string): boolean {
-    return id.startsWith(RESPONSES_TURN_SEPARATOR_ID_PREFIX);
-}
-
-/** #2627: strip turn-separator ids from block coverage IN PLACE (load-time heal
- *  of persisted state + post-commit scrub). Returns how many ids were removed;
- *  0 means the state was already clean. */
-export function scrubTurnSeparatorIds(
-    blocks: ReadonlyArray<{ directMessageIds?: string[]; effectiveMessageIds?: string[] }>,
-): number {
-    let removed = 0;
-    for (const block of blocks) {
-        for (const key of ["directMessageIds", "effectiveMessageIds"] as const) {
-            const ids = block[key];
-            if (!ids) continue;
-            const kept = ids.filter((id) => !isResponsesTurnSeparatorId(id));
-            if (kept.length !== ids.length) {
-                removed += ids.length - kept.length;
-                block[key] = kept;
-            }
-        }
-    }
-    return removed;
-}
+// #2627 turn-separator helpers moved to ./turn-separator.ts (zero-dependency leaf
+// — the storage seam needs them without session.ts's built-acp-kernel import;
+// the doc comments live there now). Re-exported so existing consumers keep the
+// session.js import path.
+export { RESPONSES_TURN_SEPARATOR_ID_PREFIX, isResponsesTurnSeparatorId, scrubTurnSeparatorIds } from "./turn-separator.js";
 
 /** #2627: the REAL-history coverage set — active blocks' effective ids minus
  *  outbound-only turn separators. Single source for every drift consumer (the
@@ -1629,6 +1669,7 @@ function evictOldest(): boolean {
         return false;
     }
     sessions.delete(oldestId);
+    stampEvictedWeight(oldestId, sessionWeight(s));
     // #3126: eviction is the trigger for the empty-view compress window (the
     // session's message bytes live only here; state reloads from disk but the
     // view self-heals only on the next model request). Log it so operators can
@@ -1652,6 +1693,7 @@ export function _resetSessionsForTest(max?: number, maxBytes?: number): void {
         if (s.inFlight > 0) s.inFlight = 0;
     }
     sessions.clear();
+    evictedWeights.clear();
 }
 
 export function _sessionsSizeForTest(): number {

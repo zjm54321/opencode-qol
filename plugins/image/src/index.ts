@@ -3,7 +3,7 @@ import { z } from "zod";
 import { loadConfiguration } from "./config.js";
 import { executeOpenAIImageGen } from "./openai.js";
 import { executeNanoBananaImageGen } from "./nanobanana.js";
-import { conversationImagePaths, errorResult } from "./images.js";
+import { conversationImagePaths, imageFailure } from "./images.js";
 
 export default Plugin.define({
   id: "opencode-imagegen",
@@ -13,7 +13,8 @@ export default Plugin.define({
     const registration = await ctx.tool.transform((editor) => {
       editor.add({
         name: "image_gen",
-        description: "Generate or edit images with OpenAI Image models (such as gpt-image-2.5-flare, gpt-image-2.5-sunburst). 1:1 replica of Codex image_gen. Saves image locally and returns markdown link.",
+        options: { codemode: false },
+        description: "Generate or edit images with configured OpenAI Image models (such as gpt-image-2.5-flare, gpt-image-2.5-sunburst). Saves workspace files and returns Markdown previews with generation metadata.",
         input: z.object({
           prompt: z.string().min(1).describe("Detailed description of the image to generate or edit."),
           model: z.string().optional().describe("Optional specific model ID (e.g. 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'). Defaults to configured default."),
@@ -29,15 +30,16 @@ export default Plugin.define({
             const config = loadConfiguration(undefined, cwd).openai;
             const recentImagePaths = input.num_last_images_to_include
               ? conversationImagePaths(await ctx.session.context({ sessionID: execution.sessionID })) : [];
-            return { content: await executeOpenAIImageGen(input, cwd, { config, recentImagePaths, signal: execution.signal }) };
+            return await executeOpenAIImageGen(input, cwd, { config, recentImagePaths, signal: execution.signal });
           } catch (error) {
-            return { content: errorResult("EXECUTION_EXCEPTION", error instanceof Error ? error.message : String(error)) };
+            return imageFailure(error, execution.signal);
           }
         },
       });
 
       editor.add({
         name: "image_gen_nano",
+        options: { codemode: false },
         description: "Generate or edit images with Google Gemini / Nano Banana models (such as gemini-3.1-flash-image). Supports native aspect ratios and multi-image reference. Saves image locally and returns markdown link.",
         input: z.object({
           prompt: z.string().min(1).describe("Description of the image to generate or editing instruction."),
@@ -53,9 +55,9 @@ export default Plugin.define({
             const config = loadConfiguration(undefined, cwd).nanobanana;
             // Scope user-supplied continuity IDs to the actual OpenCode conversation.
             const args = { ...input, session_id: input.session_id ? JSON.stringify([execution.sessionID, input.session_id]) : undefined };
-            return { content: await executeNanoBananaImageGen(args, cwd, { config, signal: execution.signal }) };
+            return await executeNanoBananaImageGen(args, cwd, { config, signal: execution.signal });
           } catch (error) {
-            return { content: errorResult("EXECUTION_EXCEPTION", error instanceof Error ? error.message : String(error)) };
+            return imageFailure(error, execution.signal);
           }
         },
       });

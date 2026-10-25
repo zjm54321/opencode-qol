@@ -1,0 +1,706 @@
+diff --git a/build.rs b/build.rs
+index 1dbf842..8e9997e 100644
+--- a/build.rs
++++ b/build.rs
+@@ -3,6 +3,14 @@ use std::path::PathBuf;
+ use std::process::Command;
+ 
+ fn main() {
++    // Nix supplies the exact pinned Ghostty VT archive as a separate derivation.
++    // This avoids network/Git probing inside the Rust build sandbox.
++    if let Some(directory) = env::var_os("OPENCODE_GHOSTTY_LIB_DIR") {
++        println!("cargo:rerun-if-env-changed=OPENCODE_GHOSTTY_LIB_DIR");
++        println!("cargo:rustc-link-search=native={}", PathBuf::from(directory).display());
++        println!("cargo:rustc-link-lib=static=ghostty-vt");
++        return;
++    }
+     println!("cargo:rerun-if-changed=build.rs");
+     println!("cargo:rerun-if-changed=ghostty-revision");
+     println!("cargo:rerun-if-changed=src/ghostty/ffi.rs");
+diff --git a/src/client.rs b/src/client.rs
+index 83879c9..ff2fb54 100644
+--- a/src/client.rs
++++ b/src/client.rs
+@@ -156,6 +156,7 @@ impl TerminalClient {
+ 
+     pub fn create(&self, request: CreateTerminal) -> Result<TerminalInfo> {
+         match self.request(Request::Create {
++            tool: request.tool,
+             program: request.program,
+             args: request.args,
+             cwd: request.cwd,
+@@ -579,6 +580,7 @@ fn play(directory: &Path) -> Result<()> {
+                     CreateTerminal::shell()?
+                 } else {
+                     CreateTerminal {
++                        tool: None,
+                         title: words[0].clone(),
+                         group_id: format!("playground:{}", env::current_dir()?.display()),
+                         env: std::collections::HashMap::new(),
+@@ -656,6 +658,7 @@ fn play(directory: &Path) -> Result<()> {
+             "demo" => {
+                 let executable = env::current_exe()?;
+                 let info = client.create(CreateTerminal {
++                    tool: None,
+                     title: "query-fixture".to_string(),
+                     group_id: format!("playground:{}", env::current_dir()?.display()),
+                     env: std::collections::HashMap::new(),
+diff --git a/src/daemon/server.rs b/src/daemon/server.rs
+index b3603ad..add1e5e 100644
+--- a/src/daemon/server.rs
++++ b/src/daemon/server.rs
+@@ -360,6 +360,7 @@ fn dispatch(
+             env,
+             cols,
+             rows,
++            tool,
+         } => Response::Created {
+             terminal: service.create(CreateTerminal {
+                 program,
+@@ -370,6 +371,7 @@ fn dispatch(
+                 env,
+                 cols,
+                 rows,
++                tool,
+             })?,
+         },
+         Request::List => Response::Terminals {
+@@ -448,6 +450,10 @@ fn dispatch(
+             }
+         }
+         Request::Subscribe { .. } => unreachable!("subscriptions are handled before dispatch"),
++        Request::Stop { id } => {
++            service.stop(id)?;
++            Response::Ok
++        }
+         Request::Terminate { id } => {
+             service.terminate(id)?;
+             Response::Ok
+diff --git a/src/protocol.rs b/src/protocol.rs
+index 26f05b7..be7f21a 100644
+--- a/src/protocol.rs
++++ b/src/protocol.rs
+@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
+ 
+ use crate::service::{TerminalId, TerminalInfo};
+ 
+-pub const PROTOCOL_VERSION: u32 = 7;
++pub const PROTOCOL_VERSION: u32 = 8;
+ pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+ const OUTPUT_FRAME_TAG: u8 = 0;
+ 
+@@ -41,6 +41,8 @@ pub enum Request {
+         env: std::collections::HashMap<String, String>,
+         cols: u16,
+         rows: u16,
++        #[serde(default)]
++        tool: Option<serde_json::Value>,
+     },
+     List,
+     Write {
+@@ -88,6 +90,7 @@ pub enum Request {
+     Terminate {
+         id: TerminalId,
+     },
++    Stop { id: TerminalId },
+     Shutdown,
+ }
+ 
+diff --git a/src/service.rs b/src/service.rs
+index 6b13c8b..3bf3df2 100644
+--- a/src/service.rs
++++ b/src/service.rs
+@@ -42,6 +42,12 @@ pub enum TerminalLifecycle {
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ pub struct TerminalInfo {
++    pub tool: Option<serde_json::Value>,
++    pub created_at: u64,
++    pub exit_signal: Option<String>,
++    pub killed: bool,
++    pub timed_out: bool,
++    pub termination_error: Option<String>,
+     pub id: TerminalId,
+     pub pid: Option<u32>,
+     pub title: String,
+@@ -136,6 +142,7 @@ impl Drop for TerminalAttachment {
+ 
+ #[derive(Clone, Debug)]
+ pub struct CreateTerminal {
++    pub tool: Option<serde_json::Value>,
+     pub program: String,
+     pub args: Vec<String>,
+     pub cwd: PathBuf,
+@@ -155,6 +162,7 @@ impl CreateTerminal {
+             .unwrap_or("shell")
+             .to_string();
+         Ok(Self {
++            tool: None,
+             program,
+             args: Vec::new(),
+             cwd: env::current_dir()?,
+@@ -360,6 +368,10 @@ impl TerminalService {
+         })
+     }
+ 
++    pub fn stop(&self, id: TerminalId) -> Result<()> {
++        self.get(id)?.request(|reply| ActorMessage::Stop { reply })
++    }
++
+     pub fn terminate(&self, id: TerminalId) -> Result<()> {
+         let terminal = self
+             .terminals
+@@ -413,11 +425,44 @@ struct TerminalHandle {
+     /// Disconnects when the actor thread exits; never carries a message.
+     actor_done: Receiver<()>,
+     shutdown_tx: Mutex<Option<Sender<()>>>,
+-    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
++    killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
+     info: Arc<RwLock<TerminalInfo>>,
+     joins: Mutex<Option<Vec<JoinHandle<()>>>>,
+ }
+ 
++// portable-pty's Unix ProcessSignaller only sends SIGHUP to the shell PID.
++// Its Unix spawn establishes a fresh session (setsid), so the child PID is
++// also this native terminal's initial process group. Kill that owned group,
++// not just the shell: descendants may otherwise keep the slave FD open and
++// prevent the reader's EOF/Stop settlement indefinitely.
++// Only ActorConfig owns this capability for new Stop/deadline operations;
++// TerminalHandle retains the upstream killer for legacy shutdown/Terminate.
++#[cfg(unix)]
++#[derive(Clone, Debug)]
++struct TerminalProcessGroupKiller {
++    process_group: libc::pid_t,
++    info: Arc<RwLock<TerminalInfo>>,
++}
++
++#[cfg(unix)]
++impl ChildKiller for TerminalProcessGroupKiller {
++    fn kill(&mut self) -> io::Result<()> {
++        // Retained actors may be removed long after the process was reaped.
++        // Never signal a recycled process-group ID after final EOF settlement.
++        if matches!(self.info.read().unwrap().lifecycle, TerminalLifecycle::Exited { .. }) {
++            return Ok(());
++        }
++        if unsafe { libc::killpg(self.process_group, libc::SIGKILL) } != 0 {
++            return Err(io::Error::last_os_error());
++        }
++        Ok(())
++    }
++
++    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
++        Box::new(self.clone())
++    }
++}
++
+ impl TerminalHandle {
+     fn spawn(id: TerminalId, request: CreateTerminal, replay_capacity: usize) -> Result<Self> {
+         let pty_system = native_pty_system();
+@@ -444,7 +489,7 @@ impl TerminalHandle {
+             .spawn_command(command)
+             .with_context(|| format!("failed to spawn {}", request.program))?;
+         let pid = child.process_id();
+-        let killer = child.clone_killer();
++        let killer = Arc::new(Mutex::new(child.clone_killer()));
+         let mut reader = pair
+             .master
+             .try_clone_reader()
+@@ -456,6 +501,12 @@ impl TerminalHandle {
+         drop(pair.slave);
+ 
+         let info = Arc::new(RwLock::new(TerminalInfo {
++            tool: request.tool.clone(),
++            created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,
++            exit_signal: None,
++            killed: false,
++            timed_out: false,
++            termination_error: None,
+             id,
+             pid,
+             title: request.title,
+@@ -472,6 +523,15 @@ impl TerminalHandle {
+             output_tail: 0,
+         }));
+ 
++        #[cfg(unix)]
++        let actor_killer: Box<dyn ChildKiller + Send + Sync> = Box::new(TerminalProcessGroupKiller {
++            process_group: pid.context("native Unix PTY child did not report its process group leader PID")? as libc::pid_t,
++            info: info.clone(),
++        });
++        #[cfg(not(unix))]
++        let actor_killer = child.clone_killer();
++        let actor_killer = Arc::new(Mutex::new(actor_killer));
++
+         let (actor_tx, actor_rx) = bounded(ACTOR_QUEUE_CAPACITY);
+         let (writer_tx, writer_rx) = bounded(WRITER_QUEUE_CAPACITY);
+         // Disconnecting this channel wakes every cancellable queue operation,
+@@ -503,6 +563,7 @@ impl TerminalHandle {
+                     cols: request.cols,
+                     rows: request.rows,
+                     init_tx,
++                    killer: actor_killer,
+                 });
+                 if let Err(error) = result {
+                     eprintln!("terminal {id} actor failed: {error:#}");
+@@ -516,8 +577,7 @@ impl TerminalHandle {
+         {
+             Ok(()) => {}
+             Err(error) => {
+-                let mut killer = killer;
+-                let _ = killer.kill();
++                let _ = killer.lock().unwrap().kill();
+                 let _ = actor_thread.join();
+                 bail!(error);
+             }
+@@ -572,6 +632,7 @@ impl TerminalHandle {
+             .context("failed to spawn terminal reader")?;
+ 
+         let wait_actor_tx = actor_tx.clone();
++        let wait_info = info.clone();
+         let wait_thread = thread::Builder::new()
+             .name(format!("opencode-pty-wait-{id}"))
+             .spawn(move || {
+@@ -580,7 +641,12 @@ impl TerminalHandle {
+                 #[cfg(unix)]
+                 {
+                     let mut child = child;
+-                    let result = child.wait().map(|status| Some(status.exit_code()));
++                    let result = child.wait().map(|status| {
++                        if let Ok(mut info) = wait_info.write() {
++                            info.exit_signal = status.signal().map(str::to_owned);
++                        }
++                        Some(status.exit_code())
++                    });
+                     let _ = wait_actor_tx.send(ActorMessage::ChildExited(
+                         result.map_err(|error| error.to_string()),
+                     ));
+@@ -592,7 +658,7 @@ impl TerminalHandle {
+             actor_tx,
+             actor_done,
+             shutdown_tx: Mutex::new(Some(shutdown_tx)),
+-            killer: Mutex::new(killer),
++            killer,
+             info,
+             joins: Mutex::new(Some(vec![
+                 actor_thread,
+@@ -658,6 +724,7 @@ fn await_reply<T>(reply: &Receiver<Result<T>>, actor_done: &Receiver<()>) -> Res
+ }
+ 
+ enum ActorMessage {
++    Stop { reply: Reply<Result<()>> },
+     Output(Vec<u8>),
+     ReaderEof,
+     ReaderFailed(String),
+@@ -772,6 +839,7 @@ impl Drop for ActorMaster {
+ }
+ 
+ struct ActorConfig {
++    killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
+     master: ActorMaster,
+     messages: Receiver<ActorMessage>,
+     writes: Sender<WriterMessage>,
+@@ -794,6 +862,7 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+         cols,
+         rows,
+         init_tx,
++        killer,
+     } = config;
+     #[cfg(windows)]
+     let mut master = master;
+@@ -811,10 +880,41 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+     let mut reader_eof = false;
+     let mut final_exit = None::<StreamEvent>;
+     let mut pending_message = None;
++    let mut stop_waiters = Vec::<Reply<Result<()>>>::new();
++    let mut deadline = info.read().ok().and_then(|i| i.tool.as_ref()?.get("deadline")?.as_u64()).map(|ms| {
++        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
++        Instant::now() + Duration::from_millis(ms.saturating_sub(now))
++    });
+     let _ = init_tx.send(Ok(()));
+ 
+     let result = loop {
+-        match receive_actor_message(&messages, &mut pending_message, &shutdown) {
++        if deadline.is_some_and(|at| Instant::now() >= at) {
++            deadline = None;
++            if child_exit.is_none() && final_exit.is_none() {
++                info.write().unwrap().timed_out = true;
++                // One deadline attempt. A failure stays visible on the running
++                // terminal and explicit Stop may retry; never retry silently.
++                let _ = terminate_child(&killer, &info, "timeout");
++            }
++        }
++        match receive_actor_message(&messages, &mut pending_message, &shutdown, deadline) {
++            Ok(ActorMessage::Stop { reply }) => {
++                if final_exit.is_some() {
++                    deadline = None;
++                    let _ = reply.send(Ok(()));
++                } else {
++                    if child_exit.is_none() {
++                        if !info.read().unwrap().killed {
++                            if let Err(error) = terminate_child(&killer, &info, "stop") {
++                                let _ = reply.send(Err(error));
++                                continue;
++                            }
++                        }
++                    }
++                    deadline = None;
++                    stop_waiters.push(reply);
++                }
++            }
+             #[cfg(not(windows))]
+             Ok(ActorMessage::RefreshForegroundProcess { reply }) => {
+                 if let Ok(master) = master.get() {
+@@ -880,7 +980,8 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+                 reply,
+             }) => {
+                 let result =
+-                    authorize_controller(&controller, attachment_id.as_deref()).and_then(|_| {
++                    authorize_service_input(&controller, attachment_id.as_deref(), &info).and_then(|_| {
++                        if child_exit.is_some() || final_exit.is_some() { bail!("terminal child has exited"); }
+                         #[cfg(windows)]
+                         master.get()?;
+                         queue_write(&writes, &shutdown, bytes)
+@@ -894,7 +995,7 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+                 reply,
+             }) => {
+                 let result = (|| {
+-                    authorize_controller(&controller, attachment_id.as_deref())?;
++                    authorize_service_input(&controller, attachment_id.as_deref(), &info)?;
+                     master.get()?.resize(PtySize {
+                         rows,
+                         cols,
+@@ -1167,6 +1268,8 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+                 event.clone(),
+             );
+             final_exit = Some(event);
++            deadline = None;
++            for reply in stop_waiters.drain(..) { let _ = reply.send(Ok(())); }
+         }
+     };
+     // Release senders blocked on the actor queue before closing ConPTY. Its
+@@ -1190,6 +1293,7 @@ fn receive_actor_message(
+     messages: &Receiver<ActorMessage>,
+     pending: &mut Option<ActorMessage>,
+     shutdown: &Receiver<()>,
++    deadline: Option<Instant>,
+ ) -> std::result::Result<ActorMessage, crossbeam_channel::RecvTimeoutError> {
+     if matches!(
+         shutdown.try_recv(),
+@@ -1202,6 +1306,7 @@ fn receive_actor_message(
+         None => crossbeam_channel::select_biased! {
+             recv(shutdown) -> _ => return Err(crossbeam_channel::RecvTimeoutError::Disconnected),
+             recv(messages) -> message => message.map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)?,
++            default(deadline.map(|at| at.saturating_duration_since(Instant::now())).unwrap_or(Duration::from_secs(86400))) => return Err(crossbeam_channel::RecvTimeoutError::Timeout),
+         },
+     };
+     let ActorMessage::Output(mut bytes) = message else {
+@@ -1575,6 +1680,7 @@ fn promote_latest(
+     subscribers.retain(|_, subscriber| !subscriber.is_disconnected());
+     let attachment_id = subscribers
+         .iter()
++        .filter(|(_, subscriber)| subscriber.last_control > 0)
+         .max_by_key(|(_, subscriber)| subscriber.last_control)
+         .map(|(attachment_id, _)| attachment_id.clone())?;
+     if let Some(subscriber) = subscribers.get_mut(&attachment_id) {
+@@ -1584,6 +1690,42 @@ fn promote_latest(
+     Some(attachment_id)
+ }
+ 
++fn terminate_child(
++    killer: &Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
++    info: &Arc<RwLock<TerminalInfo>>,
++    operation: &str,
++) -> Result<()> {
++    let result = killer.lock().unwrap().kill();
++    let mut value = info.write().unwrap();
++    match result {
++        Ok(()) => {
++            value.killed = true;
++            value.termination_error = None;
++            Ok(())
++        }
++        Err(error) => {
++            let message = format!("{operation} termination failed: {error}; retry pty_kill");
++            value.termination_error = Some(message.clone());
++            bail!(message)
++        }
++    }
++}
++
++// Authenticated server input to its tool-owned terminal must not steal pane
++// control. Attachment-origin input still requires the active controller ID;
++// ordinary UI terminals keep the official controller-only contract.
++fn authorize_service_input(
++    controller: &Option<String>,
++    attachment_id: Option<&str>,
++    info: &Arc<RwLock<TerminalInfo>>,
++) -> Result<()> {
++    if attachment_id.is_none() && info.read().unwrap().tool.as_ref()
++        .and_then(|tool| tool.get("retainOnExit")).and_then(serde_json::Value::as_bool) == Some(true) {
++        return Ok(());
++    }
++    authorize_controller(controller, attachment_id)
++}
++
+ fn authorize_controller(controller: &Option<String>, attachment_id: Option<&str>) -> Result<()> {
+     let Some(attachment_id) = attachment_id else {
+         if controller.is_none() {
+@@ -1661,6 +1803,12 @@ mod tests {
+ 
+     fn test_info() -> TerminalInfo {
+         TerminalInfo {
++            tool: None,
++            created_at: 0,
++            exit_signal: None,
++            killed: false,
++            timed_out: false,
++            termination_error: None,
+             id: 1,
+             pid: None,
+             title: "test".into(),
+@@ -1679,6 +1827,16 @@ mod tests {
+     // Real actor/parser and bounded channels, without OS pipe capacity or a
+     // large output flood. Native child/handle coverage lives in tests/runtime.rs.
+     fn test_actor() -> (TerminalHandle, Receiver<WriterMessage>) {
++        test_actor_with(test_info(), Box::new(TestKiller))
++    }
++
++    fn test_actor_with(initial_info: TerminalInfo, killer: Box<dyn ChildKiller + Send + Sync>) -> (TerminalHandle, Receiver<WriterMessage>) {
++        test_actor_with_killers(initial_info, killer.clone_killer(), killer)
++    }
++
++    fn test_actor_with_killers(initial_info: TerminalInfo, shutdown_killer: Box<dyn ChildKiller + Send + Sync>, stop_killer: Box<dyn ChildKiller + Send + Sync>) -> (TerminalHandle, Receiver<WriterMessage>) {
++        let killer = Arc::new(Mutex::new(shutdown_killer));
++        let actor_killer = Arc::new(Mutex::new(stop_killer));
+         let (actor_tx, messages) = bounded(ACTOR_QUEUE_CAPACITY);
+         let (writes, writer_rx) = bounded(1);
+         let (shutdown_tx, shutdown) = bounded(0);
+@@ -1691,7 +1849,7 @@ mod tests {
+             }
+         });
+         let (init_tx, init_rx) = std_mpsc::sync_channel(1);
+-        let info = Arc::new(RwLock::new(test_info()));
++        let info = Arc::new(RwLock::new(initial_info));
+         let actor_info = Arc::clone(&info);
+         let (actor_done_tx, actor_done) = bounded::<()>(0);
+         let actor = thread::spawn(move || {
+@@ -1710,6 +1868,7 @@ mod tests {
+                 cols: 80,
+                 rows: 24,
+                 init_tx,
++                killer: actor_killer,
+             })
+             .unwrap()
+         });
+@@ -1719,7 +1878,7 @@ mod tests {
+                 actor_tx,
+                 actor_done,
+                 shutdown_tx: Mutex::new(Some(shutdown_tx)),
+-                killer: Mutex::new(Box::new(TestKiller)),
++                killer,
+                 info,
+                 joins: Mutex::new(Some(vec![
+                     actor,
+@@ -1731,6 +1890,120 @@ mod tests {
+         )
+     }
+ 
++    #[derive(Clone, Debug)]
++    struct FailOnceKiller {
++        attempts: Arc<std::sync::atomic::AtomicUsize>,
++    }
++
++    impl ChildKiller for FailOnceKiller {
++        fn kill(&mut self) -> io::Result<()> {
++            if self.attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
++                return Err(io::Error::other("injected kill failure"));
++            }
++            Ok(())
++        }
++        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
++            Box::new(self.clone())
++        }
++    }
++
++    #[derive(Clone, Debug)]
++    struct RecordingKiller(Arc<std::sync::atomic::AtomicUsize>);
++
++    impl ChildKiller for RecordingKiller {
++        fn kill(&mut self) -> io::Result<()> {
++            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
++            Ok(())
++        }
++        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
++            Box::new(self.clone())
++        }
++    }
++
++    #[test]
++    fn termination_failure_legacy_shutdown_uses_original_killer_only() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        let original = Arc::new(AtomicUsize::new(0));
++        let group = Arc::new(AtomicUsize::new(0));
++        let (actor, _writer) = test_actor_with_killers(
++            test_info(),
++            Box::new(RecordingKiller(original.clone())),
++            Box::new(RecordingKiller(group.clone())),
++        );
++        actor.shutdown().unwrap();
++        actor.shutdown().unwrap();
++        assert_eq!(original.load(Ordering::SeqCst), 1);
++        assert_eq!(group.load(Ordering::SeqCst), 0);
++    }
++
++    fn actor_barrier(actor: &TerminalHandle) -> TerminalSnapshot {
++        actor.request(|reply| ActorMessage::Snapshot { reply }).unwrap()
++    }
++
++    #[test]
++    fn termination_failure_stop_is_retryable_and_settles_after_eof() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        let attempts = Arc::new(AtomicUsize::new(0));
++        let (actor, _writer) = test_actor_with(test_info(), Box::new(FailOnceKiller { attempts: attempts.clone() }));
++        let failed = actor.request(|reply| ActorMessage::Stop { reply }).unwrap_err();
++        assert!(failed.to_string().contains("stop termination failed: injected kill failure"));
++        let state = actor_barrier(&actor).info;
++        assert!(!state.killed);
++        assert_eq!(state.lifecycle, TerminalLifecycle::Running);
++        assert!(state.termination_error.as_deref().unwrap().contains("retry pty_kill"));
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++
++        let (reply, settled) = bounded(1);
++        actor.actor_tx.send(ActorMessage::Stop { reply }).unwrap();
++        let (reply, duplicate) = bounded(1);
++        actor.actor_tx.send(ActorMessage::Stop { reply }).unwrap();
++        let state = actor_barrier(&actor).info;
++        assert!(state.killed);
++        assert!(state.termination_error.is_none());
++        assert_eq!(attempts.load(Ordering::SeqCst), 2);
++        assert!(settled.try_recv().is_err());
++        assert!(duplicate.try_recv().is_err());
++        actor.actor_tx.send(ActorMessage::ChildExited(Ok(Some(23)))).unwrap();
++        actor.actor_tx.send(ActorMessage::Output(b"drained-final-output".to_vec())).unwrap();
++        actor_barrier(&actor);
++        assert!(settled.try_recv().is_err());
++        actor.actor_tx.send(ActorMessage::ReaderEof).unwrap();
++        settled.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
++        duplicate.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
++        assert_eq!(actor_barrier(&actor).text, "drained-final-output");
++        actor.request(|reply| ActorMessage::Stop { reply }).unwrap();
++        assert_eq!(attempts.load(Ordering::SeqCst), 2);
++        actor.shutdown().unwrap();
++    }
++
++    #[test]
++    fn termination_failure_timeout_is_visible_without_silent_retry() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        let attempts = Arc::new(AtomicUsize::new(0));
++        let mut initial = test_info();
++        initial.tool = Some(serde_json::json!({ "retainOnExit": true, "deadline": 0 }));
++        let (actor, _writer) = test_actor_with(initial, Box::new(FailOnceKiller { attempts: attempts.clone() }));
++        let state = actor_barrier(&actor).info;
++        assert!(state.timed_out);
++        assert!(!state.killed);
++        assert_eq!(state.lifecycle, TerminalLifecycle::Running);
++        assert!(state.termination_error.as_deref().unwrap().contains("timeout termination failed: injected kill failure"));
++        // Actor round trips are synchronization barriers, not sleeps/read polls.
++        actor_barrier(&actor);
++        actor_barrier(&actor);
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++        let (reply, settled) = bounded(1);
++        actor.actor_tx.send(ActorMessage::Stop { reply }).unwrap();
++        let state = actor_barrier(&actor).info;
++        assert!(state.killed && state.timed_out);
++        assert!(state.termination_error.is_none());
++        assert_eq!(attempts.load(Ordering::SeqCst), 2);
++        actor.actor_tx.send(ActorMessage::ChildExited(Ok(Some(0)))).unwrap();
++        actor.actor_tx.send(ActorMessage::ReaderEof).unwrap();
++        settled.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
++        actor.shutdown().unwrap();
++    }
++
+     #[test]
+     #[cfg(windows)]
+     fn windows_list_reads_metadata_without_an_actor_request() {
+@@ -2485,11 +2758,11 @@ mod tests {
+         let mut pending = None;
+ 
+         assert!(matches!(
+-            receive_actor_message(&messages, &mut pending, &shutdown).unwrap(),
++            receive_actor_message(&messages, &mut pending, &shutdown, None).unwrap(),
+             ActorMessage::Output(bytes) if bytes == b"abcdef"
+         ));
+         assert!(matches!(
+-            receive_actor_message(&messages, &mut pending, &shutdown).unwrap(),
++            receive_actor_message(&messages, &mut pending, &shutdown, None).unwrap(),
+             ActorMessage::ReaderEof
+         ));
+     }
+diff --git a/tests/ownership.rs b/tests/ownership.rs
+index a9f6725..fe2f9f3 100644
+--- a/tests/ownership.rs
++++ b/tests/ownership.rs
+@@ -102,6 +102,7 @@ impl Daemon {
+ 
+     fn terminal(&self, command: &str) -> TerminalInfo {
+         match self.request(Request::Create {
++            tool: None,
+             program: "/bin/sh".into(),
+             args: vec!["-c".into(), command.into()],
+             cwd: self.directory.clone(),
+diff --git a/tests/service.rs b/tests/service.rs
+index 6fbac90..113bb3e 100644
+--- a/tests/service.rs
++++ b/tests/service.rs
+@@ -61,6 +61,7 @@ fn repeated_resize_reports_are_delivered_once() {
+ 
+ fn command(script: &str) -> CreateTerminal {
+     CreateTerminal {
++        tool: None,
+         program: "/bin/sh".to_string(),
+         args: vec!["-c".to_string(), script.to_string()],
+         cwd: env::current_dir().expect("cwd"),
+diff --git a/tests/support/resize_fixture.rs b/tests/support/resize_fixture.rs
+index e09ef8a..625d9ac 100644
+--- a/tests/support/resize_fixture.rs
++++ b/tests/support/resize_fixture.rs
+@@ -30,6 +30,7 @@ impl ResizeFixture {
+         let service = TerminalService::default();
+         let terminal = service
+             .create(CreateTerminal {
++                tool: None,
+                 program: env::current_exe().unwrap().to_string_lossy().into_owned(),
+                 args: vec![
+                     "--exact".into(),
+diff --git a/tests/support/terminal_fixture.rs b/tests/support/terminal_fixture.rs
+index cdea300..8db16ac 100644
+--- a/tests/support/terminal_fixture.rs
++++ b/tests/support/terminal_fixture.rs
+@@ -42,6 +42,7 @@ impl Fixture {
+ 
+     pub fn request(&self) -> CreateTerminal {
+         CreateTerminal {
++            tool: None,
+             program: env::current_exe().unwrap().to_str().unwrap().to_owned(),
+             args: [
+                 "--ignored",
+diff --git a/tests/windows-daemon.rs b/tests/windows-daemon.rs
+index 281f0fa..c35ca81 100644
+--- a/tests/windows-daemon.rs
++++ b/tests/windows-daemon.rs
+@@ -85,6 +85,7 @@ impl Daemon {
+ 
+     fn create(&self, request: CreateTerminal) -> TerminalInfo {
+         let CreateTerminal {
++            tool,
+             program,
+             args,
+             cwd,
+@@ -95,6 +96,7 @@ impl Daemon {
+             rows,
+         } = request;
+         match self.request(Request::Create {
++            tool,
+             program,
+             args,
+             cwd,

@@ -55,10 +55,12 @@ const ORCHESTRATOR_DEFAULT_TOOL_NAMES = [
   'task_cancel',
   'task_message',
   'task_reply',
-  'task_revive',
   'task_status',
   'acp_run',
 ] as const;
+/** v1-only control tool: retired on v2, which continues retained sessions
+ * through the native delegation resume parameter. */
+const ORCHESTRATOR_V1_ONLY_TOOL_NAMES = ['task_revive'] as const;
 const MARKETPLACE_TOOL_NAMES = [
   'marketplace_inspect',
   'marketplace_manage',
@@ -646,17 +648,22 @@ function injectDisplayNames(
 
 /**
  * Apply default permissions to an agent.
- * Sets 'question' permission to 'allow' and includes skill permission presets.
- * If configuredSkills is provided, it honors that list instead of defaults.
+ * Includes skill permission presets. If configuredSkills is provided, it
+ * honors that list instead of defaults.
  *
- * Note: If the agent already explicitly sets question to 'deny', that is
- * respected (e.g. councillor should not ask questions).
+ * Question policy: subagents never block on the human. A background
+ * child's question parks with no tokens moving and no headless answerer
+ * (task_reply covers permissions on both hosts; v2 form questions need a
+ * host UI), so subagents default to 'deny' — same stance as `wait_for_user`
+ * and as v2's own built-in subagents. The orchestrator is the only ask
+ * channel. Explicit per-agent config always wins.
  */
 function applyDefaultPermissions(
   agent: AgentDefinition,
   configuredSkills?: readonly string[],
   disabledSkills?: readonly string[],
   nestedDispatchEnabled = false,
+  hostFlavor?: string,
   isPrimaryAgent = false,
 ): void {
   // A shorthand string is a user-level rule for every tool. Keep its original
@@ -678,10 +685,18 @@ function applyDefaultPermissions(
     disabledSkills,
   );
 
-  // Respect explicit deny on question (councillor)
-  const questionPerm = existing.question === 'deny' ? 'deny' : 'allow';
+  // Subagents don't ask the human by default: a parked child question
+  // has no headless answerer. Explicit config wins.
+  const questionPerm =
+    agent.name === 'orchestrator'
+      ? (existing.question ?? 'allow')
+      : (existing.question ?? 'deny');
+  const orchestratorDefaultToolNames = [
+    ...ORCHESTRATOR_DEFAULT_TOOL_NAMES,
+    ...(hostFlavor === 'v2' ? [] : ORCHESTRATOR_V1_ONLY_TOOL_NAMES),
+  ];
   const orchestratorDefaultPermissions = Object.fromEntries(
-    ORCHESTRATOR_DEFAULT_TOOL_NAMES.map((toolName) => [
+    orchestratorDefaultToolNames.map((toolName) => [
       toolName,
       existing[toolName] ?? (agent.name === 'orchestrator' ? 'allow' : 'deny'),
     ]),
@@ -982,6 +997,7 @@ export function createAgents(
       override?.skills,
       runtime.disabledSkills,
       nestedDispatchEnabled,
+      options?.hostFlavor,
     );
     return agent;
   });
@@ -997,6 +1013,7 @@ export function createAgents(
       override?.skills,
       runtime.disabledSkills,
       nestedDispatchEnabled,
+      options?.hostFlavor,
     );
     return agent;
   });
@@ -1007,6 +1024,7 @@ export function createAgents(
       undefined,
       runtime.disabledSkills,
       nestedDispatchEnabled,
+      options?.hostFlavor,
     );
     return agent;
   });
@@ -1032,6 +1050,7 @@ export function createAgents(
       undefined,
       runtime.disabledSkills,
       nestedDispatchEnabled,
+      options?.hostFlavor,
     );
     return agent;
   });
@@ -1097,6 +1116,7 @@ export function createAgents(
     orchestratorOverride?.skills,
     runtime.disabledSkills,
     nestedDispatchEnabled,
+    options?.hostFlavor,
     true,
   );
 

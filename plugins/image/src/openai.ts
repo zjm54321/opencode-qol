@@ -1,6 +1,6 @@
 import { getConfig, type ImageEngineConfig } from "./config.js";
 import { BUILTIN_MODEL_PRESETS, ASPECT_RATIO_TO_PIXELS } from "./presets.js";
-import { errorResult, readImage, saveImage, preview } from "./images.js";
+import { errorResult, imageFailure, imageResult, readImage, saveImage, type ImageResult } from "./images.js";
 
 export interface ImageGenArgs {
   prompt: string;
@@ -16,7 +16,8 @@ export async function executeOpenAIImageGen(
   args: ImageGenArgs,
   workspaceDir: string = process.cwd(),
   options: { config?: ImageEngineConfig; recentImagePaths?: string[]; signal?: AbortSignal } = {},
-): Promise<string> {
+): Promise<ImageResult> {
+  options.signal?.throwIfAborted();
   const config = options.config ?? getConfig().openai;
   if (config.enabled === false) return errorResult("PROVIDER_DISABLED", "OpenAI image generation is disabled.");
   const model = args.model || config.default_model || "gpt-image-2.5-flare";
@@ -70,10 +71,15 @@ export async function executeOpenAIImageGen(
     });
     if (!response.ok) return errorResult(`HTTP_${response.status}`, `OpenAI Image API error: ${await response.text()}`);
     const data: any = await response.json();
-    if (!data.data?.[0]?.b64_json) return errorResult("EMPTY_RESULT", "No image data returned from OpenAI Image API.");
-    const relative = await saveImage(workspaceDir, "openai", data.data[0].b64_json, "image/png");
-    return preview(relative);
+    const images = Array.isArray(data.data) ? data.data.filter((image: any) => typeof image.b64_json === "string" && image.b64_json) : [];
+    if (!images.length) return errorResult("EMPTY_RESULT", "No image data returned from OpenAI Image API.");
+    const files: string[] = [];
+    for (const image of images) {
+      options.signal?.throwIfAborted();
+      files.push(await saveImage(workspaceDir, "openai", image.b64_json, "image/png"));
+    }
+    return imageResult(files, model, args.aspect_ratio || "1:1", references.length > 0);
   } catch (error) {
-    return errorResult("EXECUTION_EXCEPTION", error instanceof Error ? error.message : String(error));
+    return imageFailure(error, options.signal, config.apiKey);
   }
 }

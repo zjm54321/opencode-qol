@@ -13,7 +13,10 @@ import {
   stringifyError,
 } from '../../utils/child-transcript';
 import { isRecord } from '../../utils/guards';
-import { createInternalAgentTextPart } from '../../utils/internal-initiator';
+import {
+  createInternalAgentTextPart,
+  TERMINAL_DELTA_METADATA_KEY,
+} from '../../utils/internal-initiator';
 import { log } from '../../utils/logger';
 import { getClient } from '../../utils/opencode-client';
 import type { SessionSelection } from '../../utils/session-selection';
@@ -155,6 +158,10 @@ export function createRevivedRunTracker(options: {
   onSettled?: (taskID: string) => void;
   contextFilesForPrompt?: (taskID: string) => ContextFile[];
   pruneContext?: () => void;
+  /** Fired when the parent prompt transport accepts a terminal
+   * notification. Persisted startup identities use this as their
+   * delivered acknowledgement, fenced to the run that produced it. */
+  onNotificationAccepted?: (taskID: string, runStartedAt?: number) => void;
   /** Resolve the parent session's CURRENT agent/model selection at send
    * time (#1079): a terminal notification must continue the parent in
    * the mode the session uses now, never a hardcoded `orchestrator`.
@@ -171,6 +178,7 @@ export function createRevivedRunTracker(options: {
     parentSessionID: string,
     taskID: string,
     generation: number,
+    runStartedAt?: number,
   ) => void;
 }): RevivedRunTracker {
   const runs = new Map<string, RevivedRun>();
@@ -331,6 +339,7 @@ export function createRevivedRunTracker(options: {
     parentSessionID: string,
     selection: SessionSelection | undefined,
     text: string,
+    extraMetadata?: Record<string, unknown>,
   ): Promise<unknown> {
     const session = getClient(options.input).session;
     const promptAsync =
@@ -354,7 +363,7 @@ export function createRevivedRunTracker(options: {
           ...(selection?.model && selection.variant
             ? { variant: selection.variant }
             : {}),
-          parts: [createInternalAgentTextPart(text)],
+          parts: [createInternalAgentTextPart(text, extraMetadata)],
         },
       },
     );
@@ -482,7 +491,16 @@ export function createRevivedRunTracker(options: {
           ) {
             throw new Error('Terminal notification is no longer current');
           }
-          return promptParent(run.parentSessionID, selection, text);
+          return promptParent(run.parentSessionID, selection, text, {
+            [TERMINAL_DELTA_METADATA_KEY]: [
+              {
+                taskID: run.taskID,
+                generation: run.generation,
+                terminalRevision: record.terminalRevision,
+                state,
+              },
+            ],
+          });
         },
         // Acceptance belongs to the publication, even if an older attempt
         // settles after its local timeout or while another attempt sends.
@@ -497,6 +515,7 @@ export function createRevivedRunTracker(options: {
             });
           }
           notification.sent = true;
+          options.onNotificationAccepted?.(run.taskID, record.runStartedAt);
           if (notification.retryTimer) {
             clearTimeout(notification.retryTimer);
             notification.retryTimer = undefined;
@@ -550,6 +569,7 @@ export function createRevivedRunTracker(options: {
         run.parentSessionID,
         run.taskID,
         run.generation,
+        record.runStartedAt,
       );
       return;
     }

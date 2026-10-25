@@ -2,7 +2,6 @@ import type {
   BackgroundJobAdoptionInput,
   BackgroundJobLaunchInput,
   BackgroundJobLease,
-  BackgroundJobPromptMetadata,
   BackgroundJobRecord,
   BackgroundJobStatusInput,
   BackgroundJobTerminalInput,
@@ -185,6 +184,17 @@ export interface BackgroundJobStore {
     input: RestoreRetainedSessionInput,
   ): BackgroundJobRecord | undefined;
   /**
+   * Startup-only correction: turn a running adopted row into a terminal row
+   * without firing a listener; the startup scanner owns the single wake.
+   */
+  correctStartupRecoveredTerminal(input: {
+    taskID: string;
+    generation: number;
+    state: 'completed' | 'error' | 'cancelled' | 'stopped';
+    resultSummary?: string;
+    now?: number;
+  }): BackgroundJobRecord | undefined;
+  /**
    * Insert an already-terminal (`reconciled`) record for a child session the
    * store does not hold; returns undefined when it does. Unlike
    * `commitTerminal`, no terminal-gate token is consumed, so the caller must
@@ -302,11 +312,6 @@ export interface BackgroundJobStore {
     },
   ): BackgroundJobRecord | undefined;
   hasConvergenceSignals(taskID: string, threshold?: number): boolean;
-  formatForPrompt(parentSessionID: string, now?: number): string | undefined;
-  formatForPromptWithMetadata(
-    parentSessionID: string,
-    now?: number,
-  ): BackgroundJobPromptMetadata | undefined;
 
   // ── Lifecycle policy ─────────────────────────────────────────────
   /** Evaluate close policy. Returns true if session should close now.

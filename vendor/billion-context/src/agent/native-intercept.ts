@@ -21,7 +21,7 @@ import { APIG_RESIGN_HEADER, APIG_RESIGN_CREDENTIAL_HEADER, APIG_RESIGN_SCHEME, 
  *  (protocol-shaped 422, the #2709 precedent) because forwarding it
  *  uncompressed cannot succeed — the body provably exceeds the model's
  *  context window. */
-export type GateVerdict = boolean | "refuse-oversized";
+export type GateVerdict = boolean | "refuse-oversized" | "refuse-oversized-unattributed";
 
 /** #3304: prepareDirectSend's verdict for one fall-back send to the real
  *  upstream (see the state field). */
@@ -124,7 +124,7 @@ export interface NativeInterceptState {
      *  window; the fetch lane answers it with a protocol-shaped 422 instead
      *  of an upstream 400. The optional body size lets the gate make that
      *  call without re-reading the request. */
-    takeoverGate?: (url: string, body?: { bytes: number }) => GateVerdict | Promise<GateVerdict>;
+    takeoverGate?: (url: string, body?: { bytes: number }, init?: RequestInit) => GateVerdict | Promise<GateVerdict>;
     /** How long a pre-ready model request waits for the bootstrap before
      *  falling back to a direct (uncompressed) send. */
     readyTimeoutMs?: number;
@@ -171,7 +171,7 @@ export interface NativeInterceptState {
      *  request tunnels with the x-bili-resign markers and every egress body
      *  bili produces is re-signed); undefined falls back to the #1886 direct
      *  send — bytes untouched, inbound signature intact, no compression. */
-    resignCredentialFor?: (url: string, scheme: string) => Promise<{ ak: string; sk: string; token?: string } | undefined>;
+    resignCredentialFor?: (url: string, scheme: string, inboundAk?: string) => Promise<{ ak: string; sk: string; token?: string } | undefined>;
 }
 
 // #1410: same-process installs share one identity — Symbol.for keeps the
@@ -250,13 +250,9 @@ export function isModelApiUrl(url: string): boolean {
     }
 }
 
-/** Detect a body-covering signature from either init.headers or a
- *  Request-object input — the two forms a dispatch can arrive in — by
- *  normalizing to lowercased header names and delegating to the single
- *  shape-based detector shared with the proxy guard (#1884/#2090). Returns
- *  the scheme token (e.g. "sdk-hmac-sha256") or undefined for unsigned
- *  traffic. */
-export function bodySignedSchemeOf(input: string | URL | Request, init?: RequestInit): string | undefined {
+/** Normalize either init.headers or a Request-object input — the two forms a
+ *  dispatch can arrive in — into a lowercased-name header record. */
+function headerRecordOf(input: string | URL | Request, init?: RequestInit): Record<string, string> | undefined {
     let headers: Headers | undefined;
     if (init?.headers !== undefined) headers = new Headers(init.headers);
     else if (input !== null && typeof input === "object" && !(input instanceof URL)) {
@@ -269,7 +265,33 @@ export function bodySignedSchemeOf(input: string | URL | Request, init?: Request
     if (headers === undefined) return undefined;
     const record: Record<string, string> = {};
     for (const [name, value] of headers) record[name] = value;
-    return inboundSignedScheme(record);
+    return record;
+}
+
+/** Detect a body-covering signature from either init.headers or a
+ *  Request-object input — the two forms a dispatch can arrive in — by
+ *  normalizing to lowercased header names and delegating to the single
+ *  shape-based detector shared with the proxy guard (#1884/#2090). Returns
+ *  the scheme token (e.g. "sdk-hmac-sha256") or undefined for unsigned
+ *  traffic. */
+export function bodySignedSchemeOf(input: string | URL | Request, init?: RequestInit): string | undefined {
+    const record = headerRecordOf(input, init);
+    return record === undefined ? undefined : inboundSignedScheme(record);
+}
+
+/** The SDK-HMAC-SHA256 signing account is named in the inbound Authorization
+ *  (`SDK-HMAC-SHA256 Access=<ak>,…`). bili re-signs every egress body (#1884),
+ *  so it must sign with THE SAME account the request was issued under — not an
+ *  arbitrary pool account — or a multi-account pool collapses to one credential
+ *  and off-account models break upstream (#3106). Returns `<ak>` or undefined
+ *  when the header is absent or carries no `Access=` field. */
+export function inboundApigAccessKey(input: string | URL | Request, init?: RequestInit): string | undefined {
+    const record = headerRecordOf(input, init);
+    if (record === undefined) return undefined;
+    const auth = String(record["authorization"] ?? "").trim();
+    const match = /\bAccess=([^,\s]+)/.exec(auth);
+    const ak = match?.[1];
+    return ak !== undefined && ak.trim() !== "" ? ak.trim() : undefined;
 }
 
 /** True when the URL addresses bili's own control plane (`/__bili/*`,
@@ -449,6 +471,26 @@ function oversizeRefusal(url: string): Response {
     return new Response(JSON.stringify({ error: { type: "server_error", code: "bili_gate_oversize_refusal", message, retryable: false } }), { status: 422, headers });
 }
 
+/** #4068/#4079: local refusal for an UNATTRIBUTED body the gate proved cannot
+ *  fit any window. `none` verdicts keep #1117 direct semantics by design — an
+ *  agentless lane is not ours to manage — but a body whose optimistic
+ *  byte-floor token count already exceeds the window has no direct future:
+ *  the raw send 400s/413s upstream and the host retries the SAME oversized
+ *  history every turn (the #4068 loop: a 6,165,048-token send against a
+ *  1,048,580 window). Refusing locally is damage control, not management —
+ *  same 422 policy-refusal class as oversizeRefusal, distinct remedy wording
+ *  (there is no broken scope to restart). */
+function unattributedOversizeRefusal(url: string): Response {
+    const message =
+        "billion-context refused this request locally: it is not attributed to any bili-managed session, and its body provably exceeds even a 1,000,000-token window — sending it directly to the provider can only be rejected (every retry re-sends the same oversized history, #4068). " +
+        "Route the conversation through a bili-managed session so it can be compressed (check the client's bili plugin attribution), or trim/remove the oversized content (e.g. a giant paste or tool result), or start a fresh session.";
+    const headers = { "content-type": "application/json", "x-bili-gate": "oversize-refusal-unattributed" };
+    if (url.endsWith("/messages")) {
+        return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message } }), { status: 422, headers });
+    }
+    return new Response(JSON.stringify({ error: { type: "server_error", code: "bili_gate_oversize_refusal_unattributed", message, retryable: false } }), { status: 422, headers });
+}
+
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
@@ -477,6 +519,14 @@ export async function readyOrigin(state: NativeInterceptState): Promise<string |
 // Observing one is therefore DIRECT EVIDENCE that this process's model channel
 // is pinned — the attach lanes consume it to decide wait/fail over spawn.
 
+// #3923: lanes without an owner hook (spawn mode — pi/opencode/dsh/omp/zcode/
+// kimi all arm the hook only in ATTACH mode) used to absorb routed-channel
+// evidence SILENTLY: baked `/bili/` URLs kept passing through to their foreign
+// origin while raw URLs followed state.origin, splitting one conversation
+// across two live instances with zero signal. Warn once per foreign origin
+// instead. (Attach lanes keep their owner-hook behavior untouched.)
+const routedMismatchWarned = new Set<string>();
+
 /** Record the origin of an already-routed model URL on the shared state and
  *  fire the owner hook on a transition (first observation or a NEW origin).
  *  MUST be called before any gate/await in the dispatch path: the recording
@@ -493,6 +543,15 @@ export function noteRoutedOrigin(state: NativeInterceptState, url: string): void
     }
     if (state.routedOrigin === origin) return;
     state.routedOrigin = origin;
+    if (state.onRoutedOriginObserved === undefined) {
+        const held = state.origin;
+        const normalizedHeld = held === undefined ? undefined : held.replace(/\/+$/, "").toLowerCase();
+        if (held !== undefined && normalizedHeld !== origin.toLowerCase() && !routedMismatchWarned.has(origin)) {
+            if (routedMismatchWarned.size >= 128) routedMismatchWarned.clear();
+            routedMismatchWarned.add(origin);
+            logHostEvent("error", "[native-client]", `bili-native: model traffic observed at ${origin} but this process's proxy is ${held} — requests will split across two bili instances and same-conversation state will desync (#394); align your client's /bili/ base URL with ${held} or stop one of the instances (#3923)`);
+        }
+    }
     state.onRoutedOriginObserved?.(origin);
 }
 
@@ -952,15 +1011,16 @@ export function installNativeFetchIntercept(initialState: NativeInterceptState):
             // below, and once a replacement lands the pre-emptive reroute
             // carries unattributed riders along (still passthrough-marked).
             if (state.takeoverGate !== undefined) {
-                const verdict = await state.takeoverGate(routedTarget, bodyByteSizeOf(init));
-                if (verdict === "refuse-oversized") {
+                const verdict = await state.takeoverGate(routedTarget, bodyByteSizeOf(init), init);
+                if (verdict === "refuse-oversized" || verdict === "refuse-oversized-unattributed") {
                     // #2924 direction 1 (routed lane): an already-routed body
                     // the gate could not claim and that provably cannot fit
                     // fails LOCALLY here too — the #1117 passthrough marker
                     // would forward it verbatim into the very upstream 400 the
-                    // raw lane already refuses.
+                    // raw lane already refuses. The unattributed variant
+                    // (#4068) covers the same shape without a broken scope.
                     state.onDispatch?.(url, "refused");
-                    return oversizeRefusal(url);
+                    return verdict === "refuse-oversized" ? oversizeRefusal(url) : unattributedOversizeRefusal(url);
                 }
                 if (verdict !== true) {
                     const stamped = withHeaders(input, init, { [BILI_PASSTHROUGH_HEADER]: "1" });
@@ -1089,7 +1149,7 @@ export function installNativeFetchIntercept(initialState: NativeInterceptState):
                 let cred: { ak: string; sk: string; token?: string } | undefined;
                 if (signedScheme === APIG_RESIGN_SCHEME && state.resignCredentialFor !== undefined) {
                     try {
-                        cred = await state.resignCredentialFor(url, signedScheme);
+                        cred = await state.resignCredentialFor(url, signedScheme, inboundApigAccessKey(input, init));
                     } catch {
                         cred = undefined;
                     }
@@ -1120,7 +1180,7 @@ export function installNativeFetchIntercept(initialState: NativeInterceptState):
             // #2924: the gate may need async settle-retries on a `threw`
             // attribution, and may answer `"refuse-oversized"` — both await
             // fine; a plain sync boolean (every other host) is unchanged.
-            const verdict = await state.takeoverGate(url, bodyByteSizeOf(init));
+            const verdict = await state.takeoverGate(url, bodyByteSizeOf(init), init);
             if (verdict !== true) {
                 // #2592/#2709 residual leak: an agentless dsh compaction call on a
                 // RAW provider URL (no settings overlay → nothing routed it) rode
@@ -1129,9 +1189,9 @@ export function installNativeFetchIntercept(initialState: NativeInterceptState):
                 // marker-sniffed POSTs into the proxy's unattributed passthrough
                 // lane (same stamp the overlay-routed case above uses), where the
                 // #2709 guard runs the decisive check: refused (422; dsh logs
-                // "step compaction failed" and continues the turn) or, with
-                // allowDshCompaction (#2028), relayed verbatim by explicit user
-                // decision. Everything else — plain traffic, stream bodies that
+                // "step compaction failed" and continues the turn) — the former
+                // allowDshCompaction opt-out was removed (#3666), so the refusal
+                // is unconditional. Everything else — plain traffic, stream bodies that
                 // cannot be peeked, a dead proxy — keeps #1117's direct semantics.
                 if (fetchMethodOf(input, init) === "POST" && await dshCompactionMarkerInBody(input, init)) {
                     const compactionOrigin = await readyOrigin(state);
@@ -1146,9 +1206,9 @@ export function installNativeFetchIntercept(initialState: NativeInterceptState):
                 // riding #1117's direct send into a guaranteed upstream 400 —
                 // on a >window local history that 400 kills the whole session,
                 // because every later request carries the same history.
-                if (verdict === "refuse-oversized") {
+                if (verdict === "refuse-oversized" || verdict === "refuse-oversized-unattributed") {
                     state.onDispatch?.(url, "refused");
-                    return oversizeRefusal(url);
+                    return verdict === "refuse-oversized" ? oversizeRefusal(url) : unattributedOversizeRefusal(url);
                 }
                 return directSendOrRefuse(url, input, init);
             }

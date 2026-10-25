@@ -3,7 +3,7 @@ let
   # Appended as the last system part for every model whose ID contains "gpt"
   # (core's GPT detection in packages/core/src/plugin/optimize.ts), except gpt-oss.
   # Every GPT agent gets base.md; the agents listed in `roles` get their own text after it.
-  # Texts are excerpts from NB-Corp/gpt-with-taste (MIT, 27e7da1): base and fixer from
+  # Texts are excerpts from NB-Corp/gpt-with-taste (MIT, 079fb262b4d7932515ba4e6341fd57b6f2122f4a): base and fixer from
   # recipe/sub.md, orchestrator from recipe/main.md.
   read = file: lib.trim (builtins.readFile file);
   base = read ./base.md;
@@ -59,4 +59,6 @@ in
 pkgs.runCommand "opencode-gpt-taste" { } ''
   install -Dm644 ${packageJson} "$out/package.json"
   install -Dm644 ${index} "$out/index.js"
+  install -Dm644 ${./LICENSE} "$out/LICENSE"
+  install -Dm644 ${./SOURCE} "$out/SOURCE"
 ''

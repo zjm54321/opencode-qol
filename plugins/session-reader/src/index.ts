@@ -55,21 +55,43 @@ export default Plugin.define({
           cursor: z.string().optional(),
         }),
         async execute(input, execution) {
-          const result = await client.listSessions({
-            search: input.search,
-            directory: input.directory ?? (input.all || input.search !== undefined ? undefined : ctx.location.directory),
-            limit: input.limit ?? 20,
-            order: input.cursor ? undefined : (input.order ?? "desc"),
-            cursor: input.cursor,
-          }, execution.signal);
-          const sessions = result.data.map(session => ({
-            id: session.id,
-            title: session.title,
-            directory: session.location?.directory ?? session.directory,
-            parentID: session.parentID,
-            updated: session.time?.updated,
-          }));
-          return { content: `${JSON.stringify(sessions, null, 2)}${pagination(result.cursor)}`, metadata: { count: sessions.length, search: input.search, cursor: result.cursor } };
+          try {
+            const result = await client.listSessions({
+              search: input.search,
+              directory: input.directory ?? (input.all || input.search !== undefined ? undefined : ctx.location?.directory),
+              limit: input.limit ?? 20,
+              order: input.cursor ? undefined : (input.order ?? "desc"),
+              cursor: input.cursor,
+            }, execution.signal);
+            const sessions = result.data.map(session => ({
+              id: session.id,
+              title: session.title,
+              directory: session.location?.directory ?? session.directory,
+              parentID: session.parentID,
+              updated: session.time?.updated,
+            }));
+            return { content: `${JSON.stringify(sessions, null, 2)}${pagination(result.cursor)}`, metadata: { count: sessions.length, search: input.search, cursor: result.cursor } };
+          } catch (err) {
+            // Standalone mode in-process fallback
+            if (typeof (ctx as any).session?.list === "function") {
+              const res = await (ctx as any).session.list({
+                search: input.search,
+                directory: input.directory ?? (input.all || input.search !== undefined ? undefined : ctx.location?.directory),
+                limit: input.limit ?? 20,
+              });
+              const rawData = Array.isArray(res) ? res : (res?.data ?? []);
+              const sessions = rawData.map((session: any) => ({
+                id: session.id,
+                title: session.title,
+                directory: session.location?.directory ?? session.directory,
+                parentID: session.parentID,
+                updated: session.time?.updated,
+              }));
+              const cursor = res?.cursor ?? {};
+              return { content: `${JSON.stringify(sessions, null, 2)}${pagination(cursor)}`, metadata: { count: sessions.length, search: input.search, cursor } };
+            }
+            throw err;
+          }
         },
       });
 
@@ -86,13 +108,38 @@ export default Plugin.define({
           type: z.string().optional().describe("Optional message type filter for recent/slice."),
         }),
         async execute(input, execution) {
+          const getSessionSafe = async (id: string) => {
+            try { return (await client.getSession(id, execution.signal)).data; }
+            catch (e) {
+              if (typeof (ctx as any).session?.get === "function") {
+                const res = await (ctx as any).session.get({ sessionID: id });
+                return res?.data ?? res;
+              }
+              throw e;
+            }
+          };
+
           if (input.mode === "diff") {
-            const diffs = (await client.getSessionDiff(input, execution.signal)).data;
+            let diffs: FileDiff[] = [];
+            try { diffs = (await client.getSessionDiff(input, execution.signal)).data; }
+            catch (e) {
+              if (typeof (ctx as any).session?.diff === "function") {
+                const res = await (ctx as any).session.diff({ sessionID: input.sessionID });
+                diffs = res?.data ?? res ?? [];
+              } else throw e;
+            }
             return { content: formatDiff(diffs), metadata: { ...diffMetadata(input.sessionID, diffs), mode: "diff", count: diffs.length } };
           }
-          const session = (await client.getSession(input.sessionID, execution.signal)).data;
+          const session = await getSessionSafe(input.sessionID);
           if (input.mode === "summary") {
-            const context = (await client.getSessionContext(input.sessionID, execution.signal)).data;
+            let context: any[] = [];
+            try { context = (await client.getSessionContext(input.sessionID, execution.signal)).data; }
+            catch (e) {
+              if (typeof (ctx as any).session?.context === "function") {
+                const res = await (ctx as any).session.context({ sessionID: input.sessionID });
+                context = res?.data ?? res ?? [];
+              } else throw e;
+            }
             const count = input.limit ?? 12;
             const messages = context.slice(-count);
             const omitted = context.length > count ? `\n\nShowing the last ${messages.length} of ${context.length} active-context messages.` : "";
@@ -129,7 +176,14 @@ export default Plugin.define({
         description: "Read a session's file changes (before/after content, bounded to 24,000 characters). Optionally select a single file.",
         input: z.object({ sessionID, file: z.string().optional() }),
         async execute(input, execution) {
-          const diffs = (await client.getSessionDiff(input, execution.signal)).data;
+          let diffs: FileDiff[] = [];
+          try { diffs = (await client.getSessionDiff(input, execution.signal)).data; }
+          catch (e) {
+            if (typeof (ctx as any).session?.diff === "function") {
+              const res = await (ctx as any).session.diff({ sessionID: input.sessionID });
+              diffs = res?.data ?? res ?? [];
+            } else throw e;
+          }
           const selected = input.file === undefined ? diffs : diffs.filter(diff => diff.file === input.file);
           return { content: formatDiff(selected), metadata: diffMetadata(input.sessionID, selected) };
         },

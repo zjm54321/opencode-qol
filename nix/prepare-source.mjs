@@ -52,6 +52,12 @@ for (const [name, variable] of [
   await copy(required(variable), path.join(assets, "plugins", name))
 }
 await copy(path.join(repository, "defaults"), path.join(assets, "defaults"))
+if (process.env.QOL_BASH) {
+  const defaultCfgFile = path.join(assets, "defaults/opencode.json")
+  const defaultCfg = JSON.parse(await fs.readFile(defaultCfgFile, "utf8"))
+  defaultCfg.shell = process.env.QOL_BASH
+  await fs.writeFile(defaultCfgFile, JSON.stringify(defaultCfg, null, 2))
+}
 await fs.symlink(required("QOL_BUN"), path.join(assets, "plugins/clear-encrypted/src/bun"))
 // npm's ignored postinstall would otherwise select an unpatched GNU ELF (or
 // download one on first use). Keep OMO's package lookup, backed by Nix's binary.
@@ -178,6 +184,12 @@ run(required("QOL_BUN"), ["run", "scripts/gen-build-info.ts"], omo)
 run(required("QOL_BUN"), ["build", "src/index.ts", "--outfile", "dist/server/index.js",
   "--target", "node", "--format", "esm", "--external", "jsdom", "--external", "jsonc-parser",
   "--external", "@opencode/*", "--external", "effect"], omo)
+run(required("QOL_BUN"), ["build", "src/v2/tui.ts", "--outfile", "dist/tui2.js",
+  "--target", "node", "--format", "esm",
+  "--external", "@opencode/*", "--external", "@opencode-ai/*",
+  "--external", "@opentui/*", "--external", "solid-js",
+  "--external", "zod", "--external", "jsdom", "--external", "jsonc-parser",
+  "--external", "semver"], omo)
 
 // Execute the upstream runtime bundlers, not tsc declaration/typecheck steps.
 // These two local packages are inlined by Billion's unmodified tsup config;
@@ -297,6 +309,11 @@ await replaceOnce(internal, 'import { WellKnownPlugin } from "../wellknown/plugi
 await replaceOnce(internal, "  Permission.Service,", "  Permission.Service,\n  PersistentPty.Service,")
 await replaceOnce(internal, "  Permission.node,", "  Permission.node,\n  PersistentPty.node,")
 await replaceOnce(internal, "post: resolve(post),", "post: [...resolve([...post, NativePtyPlugin]), ...QolPlugins],")
+
+const tuiBuiltins = path.join(source, "packages/tui/src/plugin/builtins.ts")
+await replaceOnce(tuiBuiltins, 'import Merman from "@opencode/merman/plugin"',
+  'import Merman from "@opencode/merman/plugin"\nimport OmoTui from "../../../core/src/plugin/qol/vendor/oh-my-opencode-slim/dist/tui2.js"')
+await replaceOnce(tuiBuiltins, '  Latex,', '  Latex,\n  OmoTui,')
 
 // Embed a real lowest-priority document, leaving user/project/managed config in
 // its original order. Plugin-specific defaults were merged into the vendored

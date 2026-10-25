@@ -112,7 +112,7 @@ export class OpenCodeClient {
   private readonly fetcher: typeof globalThis.fetch;
 
   constructor(private readonly options: ClientOptions = {}) {
-    this.timeoutMs = options.timeoutMs ?? 15_000;
+    this.timeoutMs = options.timeoutMs ?? 2_500;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error("timeoutMs must be a positive finite number.");
     this.fetcher = options.fetch ?? globalThis.fetch;
   }

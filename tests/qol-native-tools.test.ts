@@ -346,6 +346,93 @@ describe("direct session tools", () => {
     expect(summary.content).toContain("last answer");
     expect(get).toHaveBeenCalledWith({ sessionID: session.id });
     expect(active).toHaveBeenCalledWith({ sessionID: session.id });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test.each([[], { data: [], cursor: {} }, undefined])("empty native session list returns immediately without HTTP: %j", async value => {
+    const http = spyOn(OpenCodeClient.prototype, "listSessions").mockRejectedValue(new Error("HTTP must not run"));
+    const { tools, context } = await register(sessionPlugin);
+    const list = mock(async () => value);
+    Object.assign(context.session, { list });
+    const result = await tools.get("session_list").execute({}, execution());
+    expect(result.content).toBe("[]\n\nPagination: {}");
+    expect(result.metadata).toEqual({ count: 0, cursor: {} });
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(http).not.toHaveBeenCalled();
+  }, 1_000);
+
+  test.each(["summary", "recent", "slice"])("missing native session returns immediately in %s mode", async mode => {
+    const http = spyOn(OpenCodeClient.prototype, "getSession").mockRejectedValue(new Error("HTTP must not run"));
+    const { tools, context } = await register(sessionPlugin);
+    const active = mock(async () => []);
+    for (const value of [undefined, null, { data: undefined }, { data: null }]) {
+      Object.assign(context.session, { get: async () => value, context: active });
+      const result = await tools.get("session_read").execute({ sessionID: "ses-missing", mode }, execution());
+      expect(result).toEqual({
+        content: "Session not found: ses-missing",
+        metadata: { sessionID: "ses-missing", mode, count: 0, available: false },
+      });
+    }
+    expect(active).not.toHaveBeenCalled();
+    expect(http).not.toHaveBeenCalled();
+  }, 1_000);
+
+  test.each(["summary", "recent", "slice"])("empty native session returns a header immediately in %s mode", async mode => {
+    const get = spyOn(OpenCodeClient.prototype, "getSession").mockRejectedValue(new Error("HTTP must not run"));
+    const active = spyOn(OpenCodeClient.prototype, "getSessionContext").mockRejectedValue(new Error("HTTP must not run"));
+    const page = spyOn(OpenCodeClient.prototype, "getSessionMessages").mockRejectedValue(new Error("HTTP must not run"));
+    const { tools, context } = await register(sessionPlugin);
+    for (const value of [[], { data: [] }, undefined]) {
+      Object.assign(context.session, { get: async () => session, context: async () => value });
+      const result = await tools.get("session_read").execute({ sessionID: session.id, mode }, execution());
+      expect(result.content).toBe(`# ${session.title}\n\nSession: ${session.id}\nDirectory: ${session.directory}\n\nNo conversation messages in this session.`);
+      expect(result.metadata).toMatchObject({ sessionID: session.id, title: session.title, mode, count: 0 });
+    }
+    expect(get).not.toHaveBeenCalled();
+    expect(active).not.toHaveBeenCalled();
+    expect(page).not.toHaveBeenCalled();
+  }, 1_000);
+
+  test.each(["summary", "recent", "slice"])("missing HTTP session returns a result in %s mode after native failure", async mode => {
+    const http = spyOn(OpenCodeClient.prototype, "getSession").mockResolvedValue({ data: undefined } as any);
+    const { tools, context } = await register(sessionPlugin);
+    Object.assign(context.session, { get: async () => { throw new Error("native unavailable"); } });
+    const result = await tools.get("session_read").execute({ sessionID: "ses-missing", mode }, execution());
+    expect(result.content).toBe("Session not found: ses-missing");
+    expect(result.metadata).toEqual({ sessionID: "ses-missing", mode, count: 0, available: false });
+    expect(http).toHaveBeenCalledTimes(1);
+  });
+
+  test("failed native and HTTP session lookups return a readable result", async () => {
+    spyOn(OpenCodeClient.prototype, "getSession").mockRejectedValue(new Error("offline"));
+    const { tools, context } = await register(sessionPlugin);
+    Object.assign(context.session, { get: async () => { throw new Error("native unavailable"); } });
+    const result = await tools.get("session_read").execute({ sessionID: "ses-missing", mode: "summary" }, execution());
+    expect(result.metadata).toMatchObject({ count: 0, available: false });
+  });
+
+  test("failed native list falls back to HTTP and reports unavailable if both fail", async () => {
+    const http = spyOn(OpenCodeClient.prototype, "listSessions").mockResolvedValue({ data: [], cursor: {} });
+    const { tools, context } = await register(sessionPlugin);
+    Object.assign(context.session, { list: async () => { throw new Error("native unavailable"); } });
+    const tool = tools.get("session_list");
+    expect((await tool.execute({}, execution())).metadata).toEqual({ count: 0, cursor: {} });
+    expect(http).toHaveBeenCalledTimes(1);
+    http.mockRejectedValue(new Error("offline"));
+    const result = await tool.execute({}, execution());
+    expect(result.content).toContain("Session list is unavailable");
+    expect(result.metadata).toMatchObject({ count: 0, available: false });
+  });
+
+  test.each(["summary", "recent", "slice"])("empty HTTP messages return a header in %s mode", async mode => {
+    spyOn(OpenCodeClient.prototype, "getSession").mockResolvedValue({ data: session });
+    spyOn(OpenCodeClient.prototype, "getSessionContext").mockResolvedValue({ data: [] });
+    spyOn(OpenCodeClient.prototype, "getSessionMessages").mockResolvedValue({ data: [], cursor: {} });
+    const { tools, context } = await register(sessionPlugin);
+    context.session.context = async () => { throw new Error("native unavailable"); };
+    const result = await tools.get("session_read").execute({ sessionID: session.id, mode }, execution());
+    expect(result.content).toBe(`# ${session.title}\n\nSession: ${session.id}\nDirectory: ${session.directory}\n\nNo conversation messages in this session.`);
+    expect(result.metadata).toMatchObject({ count: 0, mode });
   });
 
   test.each([false, true])("diff HTTP failure returns a standalone hint when native diff fails or is absent: %s", async nativeFails => {
@@ -384,7 +471,7 @@ describe("direct session tools", () => {
     const { tools, context } = await register(sessionPlugin);
     Object.assign(context.session, { get: async () => session });
     const result = await tools.get("session_read").execute({ sessionID: session.id, mode: "recent" }, execution());
-    expect(result.content).toContain("No conversation messages.");
+    expect(result.content).toContain("No conversation messages in this session.");
     expect(result.metadata).toMatchObject({ count: 0, source: "active-context" });
   });
 
@@ -392,7 +479,8 @@ describe("direct session tools", () => {
     const controller = new AbortController();
     const reason = new Error("cancelled");
     controller.abort(reason);
-    const { tools } = await register(sessionPlugin);
+    const { tools, context } = await register(sessionPlugin);
+    Object.assign(context.session, { list: async () => [], get: async () => session });
     for (const [name, input] of [["session_list", {}], ["session_read", { sessionID: session.id, mode: "recent" }], ["session_diff", { sessionID: session.id }]] as const) {
       await expect(tools.get(name).execute(input, execution(controller.signal))).rejects.toBe(reason);
     }
@@ -403,7 +491,8 @@ describe("direct session tools", () => {
     spyOn(OpenCodeClient.prototype, "getSession").mockResolvedValue({ data: session });
     spyOn(OpenCodeClient.prototype, "getSessionContext").mockResolvedValue({ data: [{ role: "user", text: "first" }, { role: "assistant", text: "second" }] });
     const messages = spyOn(OpenCodeClient.prototype, "getSessionMessages").mockResolvedValue({ data: [{ role: "user", text: "hello" }], cursor });
-    const { tools } = await register(sessionPlugin);
+    const { tools, context } = await register(sessionPlugin);
+    context.session.context = async () => { throw new Error("native unavailable"); };
     expect([...tools.keys()]).toEqual(["session_list", "session_read", "session_diff"]);
     for (const tool of tools.values()) expect(tool.options).toEqual({ codemode: false });
     const ctx = execution();
@@ -468,4 +557,14 @@ describe("direct session tools", () => {
       await expect(aborted.listSessions({}, controller.signal)).rejects.toBe(reason);
     } finally { await server.stop(true); }
   });
+
+  test("HTTP fallback times out after the default 2500ms instead of hanging", async () => {
+    const configDirectory = path.join(workspace, "service-config");
+    await mkdir(configDirectory);
+    await writeFile(path.join(configDirectory, "service.json"), JSON.stringify({ port: 12345, password: "test" }));
+    const client = new OpenCodeClient({ configDirectory, fetch: ((_url, options) => new Promise((_resolve, reject) => {
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), { once: true });
+    })) as typeof fetch });
+    await expect(client.getSession("ses-missing")).rejects.toThrow("timed out after 2500ms");
+  }, 4_000);
 });

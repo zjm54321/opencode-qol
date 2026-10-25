@@ -72,7 +72,7 @@ export interface SessionMessagesOptions {
 
 export interface ServiceConfig { port: number; password: string }
 
-export async function readServiceConfig(configDirectory = join(homedir(), ".config", "opencode")): Promise<ServiceConfig> {
+export async function readServiceConfig(configDirectory = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode")): Promise<ServiceConfig> {
   for (const filename of ["service-prod.json", "service.json"]) {
     const path = join(configDirectory, filename);
     let text: string;

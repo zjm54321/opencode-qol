@@ -3,7 +3,7 @@
 import { Plugin } from "@opencode/plugin";
 import { z } from "zod";
 import { OpenCodeClient } from "./client.js";
-import type { Cursor, FileDiff, SessionInfo } from "./client.js";
+import type { Cursor, FileDiff, Page, SessionInfo, SessionMessage } from "./client.js";
 import { dehydrate, truncate } from "./dehydrate.js";
 
 const order = z.enum(["asc", "desc"]);
@@ -41,6 +41,21 @@ export default Plugin.define({
   id: "session-reader",
   async setup(ctx) {
     const client = new OpenCodeClient();
+    const standaloneDiff = "No file diffs available for this session in standalone mode.";
+    const getDiffSafe = async (input: { sessionID: string }, signal: AbortSignal): Promise<FileDiff[] | undefined> => {
+      try { return (await client.getSessionDiff(input, signal)).data; }
+      catch {
+        signal.throwIfAborted();
+        if (typeof (ctx as any).session?.diff !== "function") return undefined;
+        try {
+          const res = await (ctx as any).session.diff({ sessionID: input.sessionID });
+          return res?.data ?? res ?? [];
+        } catch {
+          signal.throwIfAborted();
+          return undefined;
+        }
+      }
+    };
     const registration = await ctx.tool.transform(editor => {
       editor.add({
         name: "session_list",
@@ -72,12 +87,15 @@ export default Plugin.define({
             }));
             return { content: `${JSON.stringify(sessions, null, 2)}${pagination(result.cursor)}`, metadata: { count: sessions.length, search: input.search, cursor: result.cursor } };
           } catch (err) {
+            execution.signal.throwIfAborted();
             // Standalone mode in-process fallback
             if (typeof (ctx as any).session?.list === "function") {
               const res = await (ctx as any).session.list({
                 search: input.search,
                 directory: input.directory ?? (input.all || input.search !== undefined ? undefined : ctx.location?.directory),
                 limit: input.limit ?? 20,
+                order: input.cursor ? undefined : (input.order ?? "desc"),
+                cursor: input.cursor,
               });
               const rawData = Array.isArray(res) ? res : (res?.data ?? []);
               const sessions = rawData.map((session: any) => ({
@@ -111,6 +129,7 @@ export default Plugin.define({
           const getSessionSafe = async (id: string) => {
             try { return (await client.getSession(id, execution.signal)).data; }
             catch (e) {
+              execution.signal.throwIfAborted();
               if (typeof (ctx as any).session?.get === "function") {
                 const res = await (ctx as any).session.get({ sessionID: id });
                 return res?.data ?? res;
@@ -120,14 +139,8 @@ export default Plugin.define({
           };
 
           if (input.mode === "diff") {
-            let diffs: FileDiff[] = [];
-            try { diffs = (await client.getSessionDiff(input, execution.signal)).data; }
-            catch (e) {
-              if (typeof (ctx as any).session?.diff === "function") {
-                const res = await (ctx as any).session.diff({ sessionID: input.sessionID });
-                diffs = res?.data ?? res ?? [];
-              } else throw e;
-            }
+            const diffs = await getDiffSafe(input, execution.signal);
+            if (!diffs) return { content: standaloneDiff, metadata: { sessionID: input.sessionID, mode: "diff", available: false } };
             return { content: formatDiff(diffs), metadata: { ...diffMetadata(input.sessionID, diffs), mode: "diff", count: diffs.length } };
           }
           const session = await getSessionSafe(input.sessionID);
@@ -146,13 +159,34 @@ export default Plugin.define({
             return { content: `${sessionHeader(session)}${omitted}\n\n${dehydrate(messages) || "No conversation messages."}`, metadata: { sessionID: input.sessionID, title: session.title, mode: input.mode, count: messages.length } };
           }
           const requestedOrder = input.cursor ? undefined : (input.mode === "recent" ? "desc" : input.order ?? "asc");
-          const result = await client.getSessionMessages({
-            sessionID: input.sessionID,
-            limit: input.limit ?? 20,
-            order: requestedOrder,
-            cursor: input.cursor,
-            type: input.type,
-          }, execution.signal);
+          let result: Page<SessionMessage>;
+          try {
+            result = await client.getSessionMessages({
+              sessionID: input.sessionID,
+              limit: input.limit ?? 20,
+              order: requestedOrder,
+              cursor: input.cursor,
+              type: input.type,
+            }, execution.signal);
+          } catch {
+            execution.signal.throwIfAborted();
+            // Active context is chronological but is not a full-history page.
+            // Never reuse an HTTP cursor or imply that older history was read.
+            try {
+              const res = await (ctx as any).session.context({ sessionID: input.sessionID });
+              const context: SessionMessage[] = res?.data ?? res ?? [];
+              const filtered = input.type === undefined ? context : context.filter(message => (message.type ?? message.role ?? message.info?.role) === input.type);
+              const count = input.limit ?? 20;
+              const messages = input.mode === "recent" || input.order === "desc" ? filtered.slice(-count) : filtered.slice(0, count);
+              return {
+                content: `${sessionHeader(session)}\n\nStandalone fallback: showing active context only; full-history pagination is unavailable.\n\n${dehydrate(messages) || "No conversation messages."}`,
+                metadata: { sessionID: input.sessionID, title: session.title, mode: input.mode, count: messages.length, cursor: {}, source: "active-context" },
+              };
+            } catch {
+              execution.signal.throwIfAborted();
+              return { content: `${sessionHeader(session)}\n\nSession messages are unavailable: neither the background service nor in-process active context could be read.`, metadata: { sessionID: input.sessionID, mode: input.mode, count: 0, available: false } };
+            }
+          }
           // Pages retain API ordering; reverse descending pages for prompt-led turn parsing.
           let descending = input.mode === "recent" || input.order === "desc";
           if (input.cursor) {
@@ -176,14 +210,8 @@ export default Plugin.define({
         description: "Read a session's file changes (before/after content, bounded to 24,000 characters). Optionally select a single file.",
         input: z.object({ sessionID, file: z.string().optional() }),
         async execute(input, execution) {
-          let diffs: FileDiff[] = [];
-          try { diffs = (await client.getSessionDiff(input, execution.signal)).data; }
-          catch (e) {
-            if (typeof (ctx as any).session?.diff === "function") {
-              const res = await (ctx as any).session.diff({ sessionID: input.sessionID });
-              diffs = res?.data ?? res ?? [];
-            } else throw e;
-          }
+          const diffs = await getDiffSafe({ sessionID: input.sessionID }, execution.signal);
+          if (!diffs) return { content: standaloneDiff, metadata: { sessionID: input.sessionID, available: false } };
           const selected = input.file === undefined ? diffs : diffs.filter(diff => diff.file === input.file);
           return { content: formatDiff(selected), metadata: diffMetadata(input.sessionID, selected) };
         },

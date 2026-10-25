@@ -18,6 +18,13 @@ const graph = path.join(source, "packages/core/src/plugin/qol")
 // AST rewriting uses the official workspace's TypeScript 6 alias/API. The root
 // TypeScript 7 build dependency is CLI-only and is not this parser's provider.
 const ts = createRequire(path.join(source, "package.json"))("typescript")
+// OMO's preset RPC is imported by both server and TUI bundles. Expose the
+// extensionless subpath explicitly in the host package used by the final build.
+const pluginPackage = path.join(source, "packages/plugin/package.json")
+const pluginManifest = JSON.parse(await fs.readFile(pluginPackage, "utf8"))
+pluginManifest.exports["./rpc"] = "./src/rpc.ts"
+await fs.writeFile(pluginPackage, JSON.stringify(pluginManifest, null, 2) + "\n")
+
 async function writable(directory) {
   await fs.chmod(directory, (await fs.stat(directory)).mode | 0o200)
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
@@ -188,7 +195,7 @@ run(required("QOL_BUN"), ["build", "src/v2/tui.ts", "--outfile", "dist/tui2.js",
   "--target", "node", "--format", "esm",
   "--external", "@opencode/*", "--external", "@opencode-ai/*",
   "--external", "@opentui/*", "--external", "solid-js",
-  "--external", "jsdom"], omo)
+  "--external", "jsdom", "--external", "jsonc-parser"], omo)
 
 // Execute the upstream runtime bundlers, not tsc declaration/typecheck steps.
 // These two local packages are inlined by Billion's unmodified tsup config;

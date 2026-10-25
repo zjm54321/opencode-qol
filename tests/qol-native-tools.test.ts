@@ -11,7 +11,7 @@ const { default: sessionPlugin } = await import("../plugins/session-reader/src/i
 const { executeOpenAIImageGen } = await import("../plugins/image/src/openai.ts");
 const { executeNanoBananaImageGen } = await import("../plugins/image/src/nanobanana.ts");
 const { readImage } = await import("../plugins/image/src/images.ts");
-const { OpenCodeClient } = await import("../plugins/session-reader/src/client.ts");
+const { OpenCodeClient, readServiceConfig } = await import("../plugins/session-reader/src/client.ts");
 
 let workspace: string;
 let originalEnv: NodeJS.ProcessEnv;
@@ -297,6 +297,107 @@ describe("direct native image tools", () => {
 });
 
 describe("direct session tools", () => {
+  test("service discovery honors XDG_CONFIG_HOME and keeps explicit overrides", async () => {
+    const directory = path.join(process.env.XDG_CONFIG_HOME!, "opencode");
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, "service.json"), JSON.stringify({ port: 12345, password: "xdg" }));
+    expect(await readServiceConfig()).toEqual({ port: 12345, password: "xdg" });
+    const override = path.join(workspace, "override");
+    await mkdir(override);
+    await writeFile(path.join(override, "service.json"), JSON.stringify({ port: 12346, password: "override" }));
+    expect(await readServiceConfig(override)).toEqual({ port: 12346, password: "override" });
+    await writeFile(path.join(directory, "service-prod.json"), JSON.stringify({ port: 12347, password: "prod" }));
+    expect(await readServiceConfig()).toEqual({ port: 12347, password: "prod" });
+  });
+
+  test.each(["disabled", "missing", "offline"])("standalone %s service falls back to native list/get/context", async state => {
+    const directory = path.join(process.env.XDG_CONFIG_HOME!, "opencode");
+    await mkdir(directory, { recursive: true });
+    if (state !== "missing") await writeFile(path.join(directory, "service.json"), JSON.stringify(state === "disabled" ? { disabled: true } : { port: 12345, password: "offline" }));
+    globalThis.fetch = mock(async () => { throw new Error("connection refused"); }) as typeof fetch;
+    const { tools, context } = await register(sessionPlugin);
+    const messages = [
+      { role: "user", text: "first question" },
+      { role: "assistant", text: "first answer" },
+      { role: "user", text: "last question" },
+      { role: "assistant", text: "last answer" },
+    ];
+    const list = mock(async () => ({ data: [session], cursor }));
+    const get = mock(async () => ({ data: session }));
+    const active = mock(async () => ({ data: messages }));
+    Object.assign(context.session, { list, get, context: active });
+    const listed = await tools.get("session_list").execute({ limit: 1, order: "asc", cursor: "native-cursor" }, execution());
+    expect(listed.metadata).toEqual({ count: 1, cursor });
+    expect(list).toHaveBeenCalledWith({ search: undefined, directory: workspace, limit: 1, order: undefined, cursor: "native-cursor" });
+    const read = tools.get("session_read");
+    const recent = await read.execute({ sessionID: session.id, mode: "recent", limit: 2 }, execution());
+    expect(recent.content).toContain("last question");
+    expect(recent.content.indexOf("last question")).toBeLessThan(recent.content.indexOf("last answer"));
+    expect(recent.content).not.toContain("first question");
+    expect(recent.metadata).toMatchObject({ count: 2, cursor: {}, source: "active-context" });
+    const slice = await read.execute({ sessionID: session.id, mode: "slice", limit: 1 }, execution());
+    expect(slice.content).toContain("first question");
+    expect(slice.content).not.toContain("last question");
+    const descending = await read.execute({ sessionID: session.id, mode: "slice", limit: 2, order: "desc", type: "user", cursor: "http-cursor" }, execution());
+    expect(descending.content).toContain("full-history pagination is unavailable");
+    expect(descending.content.indexOf("first question")).toBeLessThan(descending.content.indexOf("last question"));
+    expect(descending.content).not.toContain("answer");
+    const summary = await read.execute({ sessionID: session.id, mode: "summary", limit: 1 }, execution());
+    expect(summary.content).toContain("last answer");
+    expect(get).toHaveBeenCalledWith({ sessionID: session.id });
+    expect(active).toHaveBeenCalledWith({ sessionID: session.id });
+  });
+
+  test.each([false, true])("diff HTTP failure returns a standalone hint when native diff fails or is absent: %s", async nativeFails => {
+    spyOn(OpenCodeClient.prototype, "getSessionDiff").mockRejectedValue(new Error("offline"));
+    const { tools, context } = await register(sessionPlugin);
+    if (nativeFails) Object.assign(context.session, { diff: async () => { throw new Error("unavailable"); } });
+    for (const [name, input] of [["session_diff", { sessionID: session.id }], ["session_read", { sessionID: session.id, mode: "diff" }]] as const) {
+      const result = await tools.get(name).execute(input, execution());
+      expect(result.content).toBe("No file diffs available for this session in standalone mode.");
+      expect(result.metadata.available).toBe(false);
+    }
+  });
+
+  test("native diff still formats and filters files without HTTP", async () => {
+    spyOn(OpenCodeClient.prototype, "getSessionDiff").mockRejectedValue(new Error("offline"));
+    const { tools, context } = await register(sessionPlugin);
+    Object.assign(context.session, { diff: async () => ({ data: [{ file: "a.ts", before: "old", after: "new" }] }) });
+    const result = await tools.get("session_diff").execute({ sessionID: session.id, file: "a.ts" }, execution());
+    expect(result.content).toContain("a.ts");
+    expect(result.metadata.files).toBe(1);
+  });
+
+  test("unavailable native message context returns a readable result", async () => {
+    spyOn(OpenCodeClient.prototype, "getSession").mockResolvedValue({ data: session });
+    spyOn(OpenCodeClient.prototype, "getSessionMessages").mockRejectedValue(new Error("offline"));
+    const { tools, context } = await register(sessionPlugin);
+    context.session.context = async () => { throw new Error("context unavailable"); };
+    const result = await tools.get("session_read").execute({ sessionID: session.id, mode: "recent" }, execution());
+    expect(result.content).toContain("Session messages are unavailable");
+    expect(result.metadata.available).toBe(false);
+  });
+
+  test("empty unwrapped native context is a valid standalone read", async () => {
+    spyOn(OpenCodeClient.prototype, "getSession").mockRejectedValue(new Error("offline"));
+    spyOn(OpenCodeClient.prototype, "getSessionMessages").mockRejectedValue(new Error("offline"));
+    const { tools, context } = await register(sessionPlugin);
+    Object.assign(context.session, { get: async () => session });
+    const result = await tools.get("session_read").execute({ sessionID: session.id, mode: "recent" }, execution());
+    expect(result.content).toContain("No conversation messages.");
+    expect(result.metadata).toMatchObject({ count: 0, source: "active-context" });
+  });
+
+  test("cancellation is not swallowed by standalone fallbacks", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled");
+    controller.abort(reason);
+    const { tools } = await register(sessionPlugin);
+    for (const [name, input] of [["session_list", {}], ["session_read", { sessionID: session.id, mode: "recent" }], ["session_diff", { sessionID: session.id }]] as const) {
+      await expect(tools.get(name).execute(input, execution(controller.signal))).rejects.toBe(reason);
+    }
+  });
+
   test("registrations, counts, summary and opaque cursors remain accurate", async () => {
     const list = spyOn(OpenCodeClient.prototype, "listSessions").mockResolvedValue({ data: [session], cursor });
     spyOn(OpenCodeClient.prototype, "getSession").mockResolvedValue({ data: session });

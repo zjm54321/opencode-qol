@@ -188,8 +188,7 @@ run(required("QOL_BUN"), ["build", "src/v2/tui.ts", "--outfile", "dist/tui2.js",
   "--target", "node", "--format", "esm",
   "--external", "@opencode/*", "--external", "@opencode-ai/*",
   "--external", "@opentui/*", "--external", "solid-js",
-  "--external", "zod", "--external", "jsdom", "--external", "jsonc-parser",
-  "--external", "semver"], omo)
+  "--external", "jsdom"], omo)
 
 // Execute the upstream runtime bundlers, not tsc declaration/typecheck steps.
 // These two local packages are inlined by Billion's unmodified tsup config;

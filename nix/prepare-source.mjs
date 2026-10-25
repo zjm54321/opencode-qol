@@ -47,6 +47,11 @@ async function replaceOnce(file, before, after) {
 await fs.mkdir(path.join(assets, "plugins"), { recursive: true })
 // importNpmLock.buildNodeModules exposes node_modules below its output root.
 await copy(path.join(modules, "node_modules"), path.join(assets, "node_modules"))
+// Bundle jsonc-parser's static ESM imports instead of its UMD require calls.
+const jsoncPackage = path.join(assets, "node_modules/jsonc-parser/package.json")
+const jsoncManifest = JSON.parse(await fs.readFile(jsoncPackage, "utf8"))
+jsoncManifest.main = "./lib/esm/main.js"
+await fs.writeFile(jsoncPackage, JSON.stringify(jsoncManifest, null, 2) + "\n")
 await copy(path.join(repository, "vendor"), path.join(assets, "vendor"))
 for (const name of ["image", "session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp"]) {
   await copy(path.join(repository, "plugins", name), path.join(assets, "plugins", name))
@@ -195,7 +200,7 @@ run(required("QOL_BUN"), ["build", "src/v2/tui.ts", "--outfile", "dist/tui2.js",
   "--target", "node", "--format", "esm",
   "--external", "@opencode/*", "--external", "@opencode-ai/*",
   "--external", "@opentui/*", "--external", "solid-js",
-  "--external", "jsdom", "--external", "jsonc-parser"], omo)
+  "--external", "jsdom"], omo)
 
 // Execute the upstream runtime bundlers, not tsc declaration/typecheck steps.
 // These two local packages are inlined by Billion's unmodified tsup config;

@@ -166,10 +166,10 @@ index 8c570fb..f31766b 100644
 +const suffix = `-${edition}`
 +
 +export const qol = [
-+  "          ▄   ",
-+  "█▀▀█ █▀▀█ █   ",
-+  "█__█ █__█ █   ",
-+  "▀▀▀█ ▀▀▀▀ ▀▀  ",
++  "           ",
++  "           ",
++  " ▛▀▜ ▛▀▜ ▌ ",
++  " ▀▀▌ ▙▄▟ ▀ ",
 +]
 +
 +export function qolVersion(version: string) {

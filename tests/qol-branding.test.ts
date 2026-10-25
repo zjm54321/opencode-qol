@@ -100,15 +100,17 @@ describe("edition mark", () => {
     expect(mod.edition).toBe("qol");
   });
 
-  test("qol is a matching 4-row ASCII block font", () => {
+  test("qol is a matching mini block font sitting on the bottom baseline", () => {
     expect(Array.isArray(mod.qol)).toBe(true);
     expect(mod.qol.length).toBe(4);
     for (const row of mod.qol) {
       expect(typeof row).toBe("string");
-      expect(row.length).toBe(14);
+      expect(row.length).toBe(11);
     }
-    expect(mod.qol[1]).toContain("█▀▀█");
-    expect(mod.qol[3]).toContain("▀▀▀█");
+    expect(mod.qol[0].trim()).toBe("");
+    expect(mod.qol[1].trim()).toBe("");
+    expect(mod.qol[2]).toContain("▛▀▜");
+    expect(mod.qol[3]).toContain("▀▀▌");
   });
 
   test("component centers opencode dead-center with position: absolute for qol", () => {

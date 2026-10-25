@@ -64,12 +64,89 @@ for (const [name, variable] of [
   await copy(required(variable), path.join(assets, "plugins", name))
 }
 await copy(path.join(repository, "defaults"), path.join(assets, "defaults"))
-if (process.env.QOL_BASH) {
-  const defaultCfgFile = path.join(assets, "defaults/opencode.json")
-  const defaultCfg = JSON.parse(await fs.readFile(defaultCfgFile, "utf8"))
-  defaultCfg.shell = process.env.QOL_BASH
-  await fs.writeFile(defaultCfgFile, JSON.stringify(defaultCfg, null, 2))
+
+if (process.env.QOL_SKILLS_CONFIG) {
+  const skillsConfig = JSON.parse(await fs.readFile(process.env.QOL_SKILLS_CONFIG, "utf8"))
+  const sources = skillsConfig.sources || {}
+
+  const skillSources = {
+    "customer-research": path.join(sources["knowledge-work-plugins"], "customer-support/skills/customer-research"),
+    "context7-mcp": path.join(sources["context7-src"], "packages/opencode/skills/context7-mcp"),
+    "ui-ux-pro-max": path.join(sources["ui-ux-pro-max-skill"], ".claude/skills/ui-ux-pro-max"),
+    "make-interfaces-feel-better": path.join(sources["make-interfaces-feel-better"], "skills/make-interfaces-feel-better"),
+    "better-icons": path.join(sources["better-icons"], "skills"),
+    "python-code-style": path.join(sources["wshobson-agents"], "plugins/python-development/skills/python-code-style"),
+    "typescript-advanced-types": path.join(sources["wshobson-agents"], "plugins/javascript-typescript/skills/typescript-advanced-types"),
+    "rust-best-practices": path.join(sources["apollographql-skills"], "skills/rust-best-practices"),
+    "modern-python": path.join(sources["trailofbits-skills"], "plugins/modern-python/skills/modern-python"),
+    "skill-creator": path.join(sources["anthropic-skills"], "skills/skill-creator"),
+    "web-perf": path.join(sources["cloudflare-skills"], "skills/web-perf"),
+    "code-review-excellence": path.join(sources["wshobson-agents"], "plugins/developer-essentials/skills/code-review-excellence"),
+    "architecture": path.join(sources["knowledge-work-plugins"], "engineering/skills/architecture"),
+    "humanizer-zh": sources["humanizer-zh"],
+    "humanizer": sources["humanizer"],
+    "writing-clearly-and-concisely": path.join(sources["the-elements-of-style"], "skills/writing-clearly-and-concisely"),
+  }
+
+  for (const [name, dir] of Object.entries(skillSources)) {
+    if (!dir) throw new Error(`Missing source directory for skill ${name}`)
+    const skillMd = path.join(dir, "SKILL.md")
+    try {
+      await fs.access(skillMd)
+    } catch {
+      throw new Error(`SKILL.md not found in ${dir} for skill ${name}`)
+    }
+    await copy(dir, path.join(assets, "defaults/skills", name))
+    await copy(dir, path.join(assets, "vendor/oh-my-opencode-slim/src/skills", name))
+  }
+
+  // Local repository skills
+  for (const name of ["grill-me", "grill-with-docs", "start-work"]) {
+    const src = path.join(repository, "defaults/skills", name)
+    await copy(src, path.join(assets, "vendor/oh-my-opencode-slim/src/skills", name))
+  }
+  const imgGenSrc = path.join(repository, "plugins/image/skills/image-generation")
+  await copy(imgGenSrc, path.join(assets, "defaults/skills/image-generation"))
+  await copy(imgGenSrc, path.join(assets, "vendor/oh-my-opencode-slim/src/skills/image-generation"))
+
+  // Bundle alvin/documenter into defaults/marketplace
+  if (skillsConfig.documenterArtifact) {
+    const artifact = JSON.parse(await fs.readFile(skillsConfig.documenterArtifact, "utf8"))
+    const docPkgDir = path.join(assets, "defaults/marketplace/packages/alvin/documenter/1.0.0")
+    await fs.mkdir(docPkgDir, { recursive: true })
+    await fs.writeFile(path.join(docPkgDir, "package.json"), JSON.stringify(artifact, null, 2) + "\n")
+    await fs.writeFile(path.join(docPkgDir, "sha256"), "de350268fb5dde989cdfb5fd742d397e6aa9d731ddb2f02d6b486050bfc1b4b4\n")
+    const lockfile = {
+      schemaVersion: 2,
+      packages: {
+        "alvin/documenter": {
+          manifestSchemaVersion: 3,
+          manifestVersion: "1.0.0",
+          source: {
+            kind: "registry",
+            registry: "https://registry.ohmyopencodeslim.com/v3/",
+            indexUrl: "https://registry.ohmyopencodeslim.com/v3/index.json",
+            packageUrl: "https://registry.ohmyopencodeslim.com/v3/artifacts/alvin/documenter/1.0.0.json",
+          },
+          digest: {
+            algorithm: "sha256",
+            domain: "marketplace-agent-bundle-v3",
+            value: "de350268fb5dde989cdfb5fd742d397e6aa9d731ddb2f02d6b486050bfc1b4b4",
+          },
+        },
+      },
+    }
+    await fs.writeFile(path.join(assets, "defaults/marketplace/lock.json"), JSON.stringify(lockfile, null, 2) + "\n")
+    await copy(path.join(assets, "defaults/marketplace"), path.join(assets, "vendor/oh-my-opencode-slim/defaults/marketplace"))
+  }
 }
+const defaultCfgFile = path.join(assets, "defaults/opencode.json")
+const defaultCfg = JSON.parse(await fs.readFile(defaultCfgFile, "utf8"))
+defaultCfg.skills = [path.join(output, "defaults/skills")]
+if (process.env.QOL_BASH) {
+  defaultCfg.shell = process.env.QOL_BASH
+}
+await fs.writeFile(defaultCfgFile, JSON.stringify(defaultCfg, null, 2))
 await fs.symlink(required("QOL_BUN"), path.join(assets, "plugins/clear-encrypted/src/bun"))
 // npm's ignored postinstall would otherwise select an unpatched GNU ELF (or
 // download one on first use). Keep OMO's package lookup, backed by Nix's binary.

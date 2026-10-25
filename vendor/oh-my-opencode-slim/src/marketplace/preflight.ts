@@ -10,6 +10,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
 import type { RuntimeConfig } from '../config/runtime';
+import { CUSTOM_SKILLS } from '../cli/custom-skills-registry';
 import type { MarketplacePackageManifest } from './schemas';
 import { parseSkillFrontmatterName } from './skill-frontmatter';
 
@@ -322,7 +323,9 @@ export function discoverPreflightSkills(
   extraDirectories: readonly string[] = [],
 ): string[] {
   const disabled = new Set(runtime.disabledSkills);
-  return discoverOnDiskSkillNames(projectDirectory, extraDirectories).filter(
+  const bundled = CUSTOM_SKILLS.map((s) => s.name);
+  const onDisk = discoverOnDiskSkillNames(projectDirectory, extraDirectories);
+  return Array.from(new Set([...bundled, ...onDisk])).filter(
     (name) => !disabled.has(name),
   );
 }

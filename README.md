@@ -1,6 +1,66 @@
 # OpenCode QoL
 
-OpenCode Solution 的单体后端包（Monorepo）：将固定版本的 OpenCode 核心、原生 Persistent PTY、内置个人插件与生态插件（OMO Slim、Billion Context）由 Nix 统一构建进单一闭包，免除运行时 npm 下载。当前面向 `x86_64-linux`。
+OpenCode Quality of Life (QoL) 是一款面向生产环境的 OpenCode 完整工程化整合包（Monorepo）。它将固定版本的 OpenCode 核心 (v2.1.4)、原生 Persistent PTY、内置工程级插件群、生态增强套件（Oh My OpenCode Slim、Billion Context ACP）以及精选的专业技能库（Built-in Skills）由 Nix 统一构建进单一确定性闭包，免除任何运行时 npm/bun 安装或外部网络下载。当前面向 `x86_64-linux`。
+
+---
+
+## 🌟 整合包重大特性更新 (Major QoL Update)
+
+本版本对系统进行了全面的原生闭包重构与技能体系扩充，带来以下重大升级：
+
+### 1. 声明式固化内置 Skills 矩阵 (Nix-Native Built-in Skills)
+所有外部技能均通过 `flake.nix` 声明式引入，并由 `flake.lock` 精确锁定提交版本与 narHash，构建期由 Nix 直接固化注入，**零运行时下载、零外部依赖**：
+- **工程与架构类**：
+  - `start-work`：新项目自动化工程初始化（独立工作区、会话重命名、Nix Flake 脚手架、Git 仓库、领域 Skill 自动配置、GPL/MIT 开源许可、Python 脚本规范与热重启加载）。
+  - `architecture`：系统架构设计、边界划分与演进权衡评估（来自 Anthropic Engineering）。
+  - `code-review-excellence`：高杠杆代码审查规范与合并就绪性审核（来自 W. Hobson）。
+  - `web-perf`：现代 Web 性能分析、Core Web Vitals 与渲染链路优化（来自 Cloudflare）。
+  - `simplify`：保持行为不变的深层代码简化与可维护性重构（OMO 第一方内置）。
+  - `verification-planning`：非平凡改动前的证据闭环规划（OMO 第一方内置）。
+  - `deepwork`：大型/高风险代码修改的多阶段渐进式工作流（OMO 第一方内置）。
+  - `worktrees`：Git Worktree 安全隔离工作流（OMO 第一方内置）。
+- **语言与规范类**：
+  - `python-code-style`：现代 Python 习惯用法、类型注记与工程规范。
+  - `typescript-advanced-types`：TypeScript 高级类型工程与类型体操推导。
+  - `rust-best-practices`：惯用 Rust 架构、内存安全性与并发范式（来自 ApolloGraphQL）。
+  - `modern-python`：现代 Python 开发流与前沿工具链（来自 Trail of Bits）。
+- **设计与体验类**：
+  - `ui-ux-pro-max`：UI/UX 设计智能、设计系统与布局排版规范。
+  - `make-interfaces-feel-better`：界面微交互、动画流度与质感细节调优。
+  - `better-icons`：高质量工程图标检索与设计准则。
+  - `image-generation`：多模型 AI 图像生成与编辑协同。
+- **调研与探索类**：
+  - `context7-mcp`：基于 Context7 的实时官方文档与代码示例检索。
+  - `customer-research`：客户访谈与需求反馈综合分析（来自 Anthropic）。
+- **文字与表达类**：
+  - `humanizer-zh`：中文语境深度去 AI 味与自然表达转化。
+  - `humanizer`：英文语境去除 AI 生成特征与地道润色。
+  - `writing-clearly-and-concisely`：经典风格指南，精炼清晰有力的技术文档。
+- **元技能与思辨类**：
+  - `skill-creator`：Anthropic 官方全功能 Skill 创作者与评测迭代闭环（含评估与聚合脚本）。
+  - `grill-me` / `grill-with-docs`：无情刨根问底式思维压力测试工作流。
+
+### 2. 原生 Marketplace 固化 (alvin/documenter)
+- 遵循解耦原则，不直接污染修改 OMO 原生源码。
+- 通过 Nix 固化拉取官方已验证的 `alvin/documenter` v3 规范 artifact，在构建期生成符合 OMO 原生 Marketplace 存储规范的结构（`package.json`、`sha256` 侧车及 `lock.json`）。
+- 启动时原生注入，无需网络即可通过 `/marketplace` 检查或按需更新。
+
+### 3. 双预设支持 (Dual Presets)
+内置预设包含单模型与多梯队容灾链路：
+- **`default`**：各 Agent 绑定权威首选模型（Orchestrator: Claude Opus 5.5 High, Oracle: GPT-6 Astra Max, Explorer: GPT-6 Luna XHigh, Designer: Claude Opus 5.5 High, Fixer: GPT-6.1 Sol XHigh, Council: GPT-6.1 Sol Max, Documenter: Gemini 3.8 Flash High）。
+- **`defaultwithfallback`**：多层级故障转移链路，按优先级自动平滑回退，跨 Anthropic、Google、OpenAI 与 OpenRouter。
+
+### 4. 严苛权限与职责隔离矩阵 (Role & MCP Isolation)
+- **Specialist 独占性**：
+  - `explorer`：仅允许 `customer-research`、`context7-mcp`；专属 MCP：`context7`、`gh_grep`、`codegraph`。
+  - `designer`：仅允许 `ui-ux-pro-max`、`make-interfaces-feel-better`、`better-icons`、`image-generation`；专属 MCP：`codegraph`。
+  - `fixer`：仅允许 `python-code-style`、`typescript-advanced-types`、`rust-best-practices`、`modern-python`、`skill-creator`；专属 MCP：`codegraph`。
+  - `oracle`：仅允许 `web-perf`、`code-review-excellence`、`architecture`、`simplify`；专属 MCP：`codegraph`。
+  - `documenter`：独占允许 `humanizer-zh`、`humanizer`、`writing-clearly-and-concisely`；专属 MCP：`codegraph`。
+  - `orchestrator`：通用全集通配，严格负向排除所有专家独占技能；专属 MCP：`codegraph`、`nixos`。
+- **清理收敛**：彻底移除冗余及非必要配置与 Agent（如 secretary、observer 等），所有 QoL 内部插件命名统一为 `opencode.qol.*`。
+
+---
 
 ## 构建与运行
 

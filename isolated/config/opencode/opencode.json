@@ -47,22 +47,7 @@
         "openai/gpt-oss-20b",
         "z-ai/glm-5.3",
         "z-ai/glm-5.3-flash"
-      ],
-      "models": {
-        "deepseek/deepseek-v4.1-flash": {
-          "package": "@ai-sdk/openai-compatible",
-          "variants": [
-            {
-              "id": "xhigh",
-              "body": { "reasoning": { "effort": "xhigh" } }
-            },
-            {
-              "id": "max",
-              "body": { "reasoning": { "effort": "max" } }
-            }
-          ]
-        }
-      }
+      ]
     }
   },
   "image_providers": {

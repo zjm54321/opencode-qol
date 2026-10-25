@@ -220,8 +220,27 @@ function removeTree(target: string): void {
   syncDirectory(path.dirname(target));
 }
 
+function resolveBundledMarketplacePaths(): MarketplacePaths | undefined {
+  const envPath = process.env.OPENCODE_BUNDLED_MARKETPLACE?.trim();
+  const candidates = [
+    envPath,
+    path.join(__dirname, '..', '..', 'defaults', 'marketplace'),
+    path.join(__dirname, '..', 'defaults', 'marketplace'),
+    path.join(__dirname, 'defaults', 'marketplace'),
+    '/share/opencode-qol/defaults/marketplace',
+  ].filter((p): p is string => Boolean(p && pathExists(p)));
+
+  for (const candidate of candidates) {
+    if (pathExists(path.join(candidate, 'lock.json'))) {
+      return getMarketplacePaths(candidate);
+    }
+  }
+  return undefined;
+}
+
 export class MarketplaceStore {
   readonly paths: MarketplacePaths;
+  readonly bundledPaths?: MarketplacePaths;
   private readonly pluginVersion: string;
   private readonly lockOptions: MarketplaceLockOptions;
   private pendingLeaseCleanup: MarketplaceLease | undefined;
@@ -238,6 +257,7 @@ export class MarketplaceStore {
     this.pluginVersion = pluginVersion.data;
     this.lockOptions = normalizeLockOptions(options.lock ?? {});
     this.paths = getMarketplacePaths(options.rootDir);
+    this.bundledPaths = resolveBundledMarketplacePaths();
   }
 
   getLockfile(): MarketplaceLockfile {
@@ -638,6 +658,13 @@ export class MarketplaceStore {
       serialized = fs.readFileSync(this.paths.lockfilePath, 'utf8');
     } catch (error) {
       if (errnoCode(error) === 'ENOENT') {
+        if (this.bundledPaths && pathExists(this.bundledPaths.lockfilePath)) {
+          try {
+            const bundledRaw = fs.readFileSync(this.bundledPaths.lockfilePath, 'utf8');
+            const bundledParsed = MarketplaceLockfileSchema.safeParse(JSON.parse(bundledRaw));
+            if (bundledParsed.success) return bundledParsed.data;
+          } catch {}
+        }
         return {
           schemaVersion: MARKETPLACE_LOCKFILE_SCHEMA_VERSION,
           packages: {},
@@ -661,6 +688,21 @@ export class MarketplaceStore {
       throw new MarketplaceLockfileError(
         `Marketplace lockfile is invalid: ${parsed.error.message}`,
       );
+    }
+    if (this.bundledPaths && pathExists(this.bundledPaths.lockfilePath)) {
+      try {
+        const bundledRaw = fs.readFileSync(this.bundledPaths.lockfilePath, 'utf8');
+        const bundledParsed = MarketplaceLockfileSchema.safeParse(JSON.parse(bundledRaw));
+        if (bundledParsed.success) {
+          return {
+            ...parsed.data,
+            packages: {
+              ...bundledParsed.data.packages,
+              ...parsed.data.packages,
+            },
+          };
+        }
+      } catch {}
     }
     return parsed.data;
   }
@@ -716,11 +758,21 @@ export class MarketplaceStore {
   ): StoredMarketplacePackage {
     const entry = lockfile.packages[id];
     if (!entry) throw new MarketplaceIntegrityError(`${id} is not installed`);
-    const versionPath = packageVersionPath(
+    let versionPath = packageVersionPath(
       this.paths,
       id,
       entry.manifestVersion,
     );
+    if (!pathExists(versionPath) && this.bundledPaths) {
+      const candidate = packageVersionPath(
+        this.bundledPaths,
+        id,
+        entry.manifestVersion,
+      );
+      if (pathExists(candidate)) {
+        versionPath = candidate;
+      }
+    }
     let bundle: MarketplacePackageBundle;
     let sidecar: string;
     try {

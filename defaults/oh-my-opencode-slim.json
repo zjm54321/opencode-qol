@@ -4,24 +4,365 @@
   "preset": "default",
   "presets": {
     "default": {
-      "orchestrator": { "model": "google/gemini-3.8-flash", "variant": "medium" },
-      "oracle": { "model": "google/gemini-3.8-flash", "variant": "high" },
-      "explorer": { "model": "google/gemini-3.8-flash", "variant": "low" },
-      "designer": { "model": "google/gemini-3.8-flash", "variant": "medium" },
-      "fixer": { "model": "google/gemini-3.8-flash", "variant": "low" }
+      "orchestrator": {
+        "model": "anthropic/claude-opus-5-5",
+        "variant": "high",
+        "skills": [
+          "*",
+          "!customer-research",
+          "!context7-mcp",
+          "!ui-ux-pro-max",
+          "!make-interfaces-feel-better",
+          "!better-icons",
+          "!python-code-style",
+          "!typescript-advanced-types",
+          "!rust-best-practices",
+          "!web-perf",
+          "!code-review-excellence",
+          "!architecture",
+          "!simplify",
+          "!humanizer-zh",
+          "!humanizer",
+          "!writing-clearly-and-concisely"
+        ],
+        "mcps": [
+          "codegraph",
+          "nixos"
+        ]
+      },
+      "oracle": {
+        "model": "openai/gpt-6-astra",
+        "variant": "max",
+        "skills": [
+          "web-perf",
+          "code-review-excellence",
+          "architecture",
+          "simplify"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "explorer": {
+        "model": "openai/gpt-6-luna",
+        "variant": "xhigh",
+        "skills": [
+          "customer-research",
+          "context7-mcp"
+        ],
+        "mcps": [
+          "codegraph",
+          "context7",
+          "gh_grep"
+        ]
+      },
+      "designer": {
+        "model": "anthropic/claude-opus-5-5",
+        "variant": "high",
+        "skills": [
+          "ui-ux-pro-max",
+          "make-interfaces-feel-better",
+          "better-icons",
+          "image-generation"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "fixer": {
+        "model": "openai/gpt-6.1-sol",
+        "variant": "xhigh",
+        "skills": [
+          "python-code-style",
+          "typescript-advanced-types",
+          "rust-best-practices",
+          "modern-python",
+          "skill-creator"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "council": {
+        "model": "openai/gpt-6.1-sol",
+        "variant": "max",
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "documenter": {
+        "model": "google/gemini-3.8-flash",
+        "variant": "high",
+        "skills": [
+          "humanizer-zh",
+          "humanizer",
+          "writing-clearly-and-concisely"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      }
     },
-    "fast": {
-      "orchestrator": { "model": "google/gemini-3.8-flash", "variant": "low" },
-      "oracle": { "model": "google/gemini-3.8-flash", "variant": "medium" },
-      "explorer": { "model": "google/gemini-3.8-flash", "variant": "low" },
-      "designer": { "model": "google/gemini-3.8-flash", "variant": "low" },
-      "fixer": { "model": "google/gemini-3.8-flash", "variant": "low" }
+    "defaultwithfallback": {
+      "orchestrator": {
+        "model": [
+          { "id": "anthropic/claude-opus-5-5", "variant": "high" },
+          { "id": "google/gemini-4-argon", "variant": "high" },
+          { "id": "anthropic/claude-fable-5-1", "variant": "high" },
+          { "id": "openrouter/z-ai/glm-5.3", "variant": "high" }
+        ],
+        "skills": [
+          "*",
+          "!customer-research",
+          "!context7-mcp",
+          "!ui-ux-pro-max",
+          "!make-interfaces-feel-better",
+          "!better-icons",
+          "!python-code-style",
+          "!typescript-advanced-types",
+          "!rust-best-practices",
+          "!web-perf",
+          "!code-review-excellence",
+          "!architecture",
+          "!simplify",
+          "!humanizer-zh",
+          "!humanizer",
+          "!writing-clearly-and-concisely"
+        ],
+        "mcps": [
+          "codegraph",
+          "nixos"
+        ]
+      },
+      "oracle": {
+        "model": [
+          { "id": "openai/gpt-6-astra", "variant": "max" },
+          { "id": "anthropic/claude-opus-5-5", "variant": "max" },
+          { "id": "openrouter/deepseek/deepseek-v4.1-flash", "variant": "max" },
+          { "id": "openrouter/z-ai/glm-5.3", "variant": "max" }
+        ],
+        "skills": [
+          "web-perf",
+          "code-review-excellence",
+          "architecture",
+          "simplify"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "explorer": {
+        "model": [
+          { "id": "openai/gpt-6-luna", "variant": "xhigh" },
+          { "id": "openrouter/deepseek/deepseek-v4.1-flash", "variant": "medium" },
+          { "id": "openrouter/z-ai/glm-5.3-flash", "variant": "xhigh" },
+          { "id": "anthropic/claude-haiku-5-5", "variant": "xhigh" },
+          { "id": "google/gemini-3.8-flash", "variant": "high" }
+        ],
+        "skills": [
+          "customer-research",
+          "context7-mcp"
+        ],
+        "mcps": [
+          "codegraph",
+          "context7",
+          "gh_grep"
+        ]
+      },
+      "designer": {
+        "model": [
+          { "id": "anthropic/claude-opus-5-5", "variant": "high" },
+          { "id": "google/gemini-4-argon", "variant": "high" },
+          { "id": "openrouter/moonshotai/kimi-k3", "variant": "high" },
+          { "id": "google/gemini-3.8-flash", "variant": "high" }
+        ],
+        "skills": [
+          "ui-ux-pro-max",
+          "make-interfaces-feel-better",
+          "better-icons",
+          "image-generation"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "fixer": {
+        "model": [
+          { "id": "openai/gpt-6.1-sol", "variant": "xhigh" },
+          { "id": "openrouter/deepseek/deepseek-v4.1-flash", "variant": "high" },
+          { "id": "openrouter/z-ai/glm-5.3", "variant": "high" },
+          { "id": "anthropic/claude-opus-5-5", "variant": "high" }
+        ],
+        "skills": [
+          "python-code-style",
+          "typescript-advanced-types",
+          "rust-best-practices",
+          "modern-python",
+          "skill-creator"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "council": {
+        "model": [
+          { "id": "openai/gpt-6.1-sol", "variant": "max" },
+          { "id": "anthropic/claude-opus-5-5", "variant": "high" },
+          { "id": "google/gemini-3.8-flash", "variant": "high" }
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "documenter": {
+        "model": [
+          { "id": "google/gemini-3.8-flash", "variant": "high" },
+          { "id": "openrouter/deepseek/deepseek-v4.1-flash", "variant": "medium" },
+          { "id": "openrouter/z-ai/glm-5.3", "variant": "high" },
+          { "id": "anthropic/claude-haiku-5-5", "variant": "max" }
+        ],
+        "skills": [
+          "humanizer-zh",
+          "humanizer",
+          "writing-clearly-and-concisely"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      }
     }
   },
-  "disabled_agents": ["observer"],
+  "marketplacePresets": {
+    "default": {
+      "agents": [
+        "alvin/documenter"
+      ]
+    },
+    "defaultwithfallback": {
+      "agents": [
+        "alvin/documenter"
+      ]
+    }
+  },
+  "council": {
+    "presets": {
+      "default": {
+        "alpha": {
+          "model": "openai/gpt-6-astra",
+          "variant": "max"
+        },
+        "beta": {
+          "model": "google/gemini-4-argon",
+          "variant": "high"
+        },
+        "gamma": {
+          "model": "anthropic/claude-opus-5-5",
+          "variant": "max"
+        }
+      },
+      "defaultwithfallback": {
+        "alpha": {
+          "model": "openai/gpt-6-astra",
+          "variant": "max"
+        },
+        "beta": {
+          "model": "google/gemini-4-argon",
+          "variant": "high"
+        },
+        "gamma": {
+          "model": "anthropic/claude-opus-5-5",
+          "variant": "max"
+        }
+      }
+    }
+  },
+  "disabled_agents": [
+    "observer"
+  ],
   "agents": {
+    "orchestrator": {
+      "skills": [
+        "*",
+        "!customer-research",
+        "!context7-mcp",
+        "!ui-ux-pro-max",
+        "!make-interfaces-feel-better",
+        "!better-icons",
+        "!python-code-style",
+        "!typescript-advanced-types",
+        "!rust-best-practices",
+        "!web-perf",
+        "!code-review-excellence",
+        "!architecture",
+        "!simplify",
+        "!humanizer-zh",
+        "!humanizer",
+        "!writing-clearly-and-concisely"
+      ],
+      "mcps": [
+        "codegraph",
+        "nixos"
+      ]
+    },
+    "oracle": {
+      "skills": [
+        "web-perf",
+        "code-review-excellence",
+        "architecture",
+        "simplify"
+      ],
+      "mcps": [
+        "codegraph"
+      ]
+    },
     "explorer": {
-      "mcps": ["context7", "gh_grep", "codegraph", "nixos"]
+      "skills": [
+        "customer-research",
+        "context7-mcp"
+      ],
+      "mcps": [
+        "codegraph",
+        "context7",
+        "gh_grep"
+      ]
+    },
+    "designer": {
+      "skills": [
+        "ui-ux-pro-max",
+        "make-interfaces-feel-better",
+        "better-icons",
+        "image-generation"
+      ],
+      "mcps": [
+        "codegraph"
+      ]
+    },
+    "fixer": {
+      "skills": [
+        "python-code-style",
+        "typescript-advanced-types",
+        "rust-best-practices",
+        "modern-python",
+        "skill-creator"
+      ],
+      "mcps": [
+        "codegraph"
+      ]
+    },
+    "council": {
+      "mcps": [
+        "codegraph"
+      ]
+    },
+    "documenter": {
+      "skills": [
+        "humanizer-zh",
+        "humanizer",
+        "writing-clearly-and-concisely"
+      ],
+      "mcps": [
+        "codegraph"
+      ]
     }
   },
   "companion": {

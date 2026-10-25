@@ -4,11 +4,20 @@
   opencode,
   pluginNodeModules,
   nativePty,
+  skillInputs ? { },
   modelPolicies ? { },
   ...
 }:
 let
   system = pkgs.stdenv.hostPlatform.system;
+  documenterArtifact = pkgs.fetchurl {
+    url = "https://registry.ohmyopencodeslim.com/v3/artifacts/alvin/documenter/1.0.0.json";
+    hash = "sha256-8HGVZWEWIXGnLQTUrrLz+YF/Zbukued4w/RNCxnkQDA=";
+  };
+  skillsConfig = pkgs.writeText "qol-skills-inputs.json" (builtins.toJSON {
+    documenterArtifact = "${documenterArtifact}";
+    sources = skillInputs;
+  });
   patchedSource = pkgs.applyPatches {
     name = "opencode-qol-upstream-source";
     src = opencode.outPath;
@@ -74,6 +83,7 @@ upstream.overrideAttrs (old: {
     export QOL_BUN=${lib.getExe pkgs.bun}
     export QOL_AST_GREP=${lib.getExe mcpServers.astGrep}
     export QOL_BASH="${pkgs.bashInteractive}/bin/bash"
+    export QOL_SKILLS_CONFIG="${skillsConfig}"
     # Builds the checked-in OMO/Billion sources using integrity-locked library
     # inputs before the upstream CLI's static Bun compilation. No npm install.
     node ${./prepare-source.mjs}
@@ -96,7 +106,7 @@ upstream.overrideAttrs (old: {
     cp ${mcpServers.licenses.nixos} "$out/share/licenses/opencode-qol-mcp/mcp-nixos-MIT-LICENSE"
     cp ${builtins.toFile "opencode-qol-mcp-SOURCES.json" (builtins.toJSON mcpServers.sourceInfo)} "$out/share/doc/opencode-qol-mcp/SOURCES.json"
     cp -a "$QOL_ASSET_ROOT/." "$out/lib/opencode-qol/"
-    cp -R ${../defaults} "$out/share/opencode-qol/defaults"
+    cp -a "$QOL_ASSET_ROOT/defaults" "$out/share/opencode-qol/defaults"
     cp -R ${../assets/branding} "$out/share/opencode-qol/branding"
     cp ${../README.md} "$out/share/opencode-qol/README.md"
     cp ${../LICENSE} "$out/lib/opencode-qol/LICENSE"

@@ -25,7 +25,18 @@ export async function executeNanoBananaImageGen(
   options.signal?.throwIfAborted();
   const config = options.config ?? getConfig().nanobanana;
   if (config.enabled === false) return errorResult("PROVIDER_DISABLED", "Nano Banana image generation is disabled.");
-  const model = args.model || config.default_model || "gemini-3.1-flash-image";
+  if (!args.model?.trim()) {
+    const available = config.whitelist?.length ? config.whitelist : (config.available_models ?? []);
+    return errorResult("MODEL_REQUIRED", `Image model must be explicitly specified. Available models: ${available.join(", ")}`, {
+      available_models: available,
+    });
+  }
+  const model = args.model.trim();
+  if (config.whitelist?.length && !config.whitelist.includes(model)) {
+    return errorResult("MODEL_NOT_IN_WHITELIST", `Model '${model}' is not in the allowed whitelist. Allowed models: ${config.whitelist.join(", ")}`, {
+      requested_model: model, whitelist: config.whitelist,
+    });
+  }
   if (!config.available_models?.includes(model)) {
     return errorResult("MODEL_NOT_CONFIGURED", `Model '${model}' is not enabled.`, {
       requested_model: model, runtime_available_models: config.available_models ?? [],

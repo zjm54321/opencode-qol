@@ -139,7 +139,9 @@ export function loadConfiguration(
     if (!Array.isArray(engine.available_models) || engine.available_models.some((model: any) => typeof model !== "string" || !model)) {
       throw new Error("available_models must be an array of non-empty model IDs");
     }
-    if (typeof engine.default_model !== "string" || !engine.default_model) throw new Error("default_model must be a non-empty string");
+    if (engine.default_model !== undefined && (typeof engine.default_model !== "string" || !engine.default_model)) {
+      throw new Error("default_model must be a non-empty string");
+    }
   }
   activeConfig = result;
   return result;

@@ -58,19 +58,93 @@ function execution(signal = new AbortController().signal) { return { sessionID: 
 function respond(value: unknown, status = 200) { return async () => Response.json(value, { status }); }
 
 describe("direct native image tools", () => {
-  test("both registrations opt out of codemode and retain validated input", async () => {
+  test("image tool registrations opt out of codemode and retain validated input", async () => {
     const { tools } = await register(imagePlugin);
-    expect([...tools.keys()]).toEqual(["image_gen", "image_gen_nano"]);
+    expect([...tools.keys()]).toEqual(["image_gen", "image_gen_nano", "image_models"]);
     for (const tool of tools.values()) expect(tool.options).toEqual({ codemode: false });
     expect(tools.get("image_gen").input.safeParse({ prompt: "" }).success).toBe(false);
     expect(tools.get("image_gen").input.safeParse({ prompt: "x", num_last_images_to_include: 6 }).success).toBe(false);
   });
 
+  test.each(["all", "openai", "google"])("image_models lists whitelisted %s models in OpenCode format", async provider => {
+    await writeFile(path.join(workspace, "opencode.json"), JSON.stringify({ image_generation: {
+      openai: { whitelist: ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"] },
+      google: { whitelist: ["gemini-3.1-flash-image"] },
+    } }));
+    const fetcher = mock(respond({}));
+    globalThis.fetch = fetcher as typeof fetch;
+    const { tools } = await register(imagePlugin);
+    const tool = tools.get("image_models");
+    const input = tool.input.parse(provider === "all" ? {} : { provider });
+    expect(input.provider).toBe(provider);
+    const result = await tool.execute(input, execution());
+    const models = [
+      { providerID: "openai", id: "gpt-image-2.5-flare" },
+      { providerID: "openai", id: "gpt-image-2.5-sunburst" },
+      { providerID: "google", id: "gemini-3.1-flash-image" },
+    ].filter(model => provider === "all" || model.providerID === provider);
+    expect(result.metadata).toEqual({ count: models.length, models });
+    expect(result.content).toBe(models.map(model => `${model.providerID}/${model.id}`).sort((a, b) => a.localeCompare(b)).join("\n"));
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test("image_models lists configured available models without a whitelist", async () => {
+    await writeFile(path.join(workspace, "opencode.json"), JSON.stringify({ image_generation: {
+      openai: { available_models: ["custom-openai-image"] },
+      google: { available_models: ["custom-google-image"] },
+    } }));
+    const { tools } = await register(imagePlugin);
+    const tool = tools.get("image_models");
+    const result = await tool.execute(tool.input.parse({}), execution());
+    expect(result.content).toBe("google/custom-google-image\nopenai/custom-openai-image");
+    expect(result.metadata).toEqual({ count: 2, models: [
+      { providerID: "openai", id: "custom-openai-image" },
+      { providerID: "google", id: "custom-google-image" },
+    ] });
+  });
+
+  test.each(["image_gen", "image_gen_nano"])("%s rejects missing and blank models with the available whitelist", async name => {
+    const engineConfig = name === "image_gen" ? config : nanoConfig;
+    const provider = name === "image_gen" ? "openai" : "google";
+    const available = engineConfig.available_models;
+    await writeFile(path.join(workspace, "opencode.json"), JSON.stringify({ image_generation: {
+      [provider]: { whitelist: available },
+    } }));
+    const fetcher = mock(respond({}));
+    globalThis.fetch = fetcher as typeof fetch;
+    const { tools } = await register(imagePlugin);
+    for (const input of [{ prompt: "x" }, { prompt: "x", model: "" }, { prompt: "x", model: "  " }]) {
+      await expect(tools.get(name).execute(input, execution())).rejects.toMatchObject({
+        _tag: "Tool.Error",
+        message: JSON.stringify({
+          status: "error",
+          error_code: "MODEL_REQUIRED",
+          message: `Image model must be explicitly specified. Available models: ${available.join(", ")}`,
+          available_models: available,
+        }),
+        metadata: { error_code: "MODEL_REQUIRED", available_models: available },
+      });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test.each(["openai", "nano"])("%s requires an explicit model even with a configured default and no whitelist", async provider => {
+    const engineConfig = provider === "openai" ? config : nanoConfig;
+    const run = provider === "openai" ? executeOpenAIImageGen : executeNanoBananaImageGen;
+    const fetcher = mock(respond({}));
+    globalThis.fetch = fetcher as typeof fetch;
+    await expect(run({ prompt: "x" }, workspace, { config: engineConfig })).rejects.toMatchObject({
+      _tag: "Tool.Error",
+      metadata: { error_code: "MODEL_REQUIRED", available_models: engineConfig.available_models },
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   test.each([1, 2])("OpenAI returns actual metadata and saved links for %i image(s)", async count => {
     globalThis.fetch = mock(respond({ data: Array.from({ length: count }, () => ({ b64_json: png })) })) as typeof fetch;
     const { tools } = await register(imagePlugin);
-    const result = await tools.get("image_gen").execute({ prompt: "test", aspect_ratio: "16:9" }, execution());
-    expect(result.metadata).toMatchObject({ count, model: config.default_model, aspect_ratio: "16:9", edited: false });
+    const result = await tools.get("image_gen").execute({ prompt: "test", model: "gpt-image-2.5-flare", aspect_ratio: "16:9" }, execution());
+    expect(result.metadata).toMatchObject({ count, model: "gpt-image-2.5-flare", aspect_ratio: "16:9", edited: false });
     expect(result.metadata.files).toHaveLength(count);
     for (const file of result.metadata.files) {
       expect(result.content).toContain(`](${file})`);
@@ -81,8 +155,8 @@ describe("direct native image tools", () => {
   test.each([1, 2])("Nano returns actual metadata for %i non-thought image(s)", async count => {
     globalThis.fetch = mock(respond({ candidates: [{ content: { parts: [{ ...nanoImage, thought: true }, ...Array.from({ length: count }, () => nanoImage)] } }] })) as typeof fetch;
     const { tools } = await register(imagePlugin);
-    const result = await tools.get("image_gen_nano").execute({ prompt: "test" }, execution());
-    expect(result.metadata).toMatchObject({ count, model: nanoConfig.default_model, aspect_ratio: "1:1", edited: false });
+    const result = await tools.get("image_gen_nano").execute({ prompt: "test", model: "gemini-3.1-flash-image" }, execution());
+    expect(result.metadata).toMatchObject({ count, model: "gemini-3.1-flash-image", aspect_ratio: "1:1", edited: false });
     expect(result.metadata.files).toHaveLength(count);
   });
 
@@ -96,7 +170,7 @@ describe("direct native image tools", () => {
     }) as typeof fetch;
     const { tools, context } = await register(imagePlugin);
     context.session.context = async () => [{ content: "![reference](ref.png)" }] as any;
-    const result = await tools.get("image_gen").execute({ prompt: "edit", num_last_images_to_include: 1 }, execution(signal));
+    const result = await tools.get("image_gen").execute({ prompt: "edit", model: "gpt-image-2.5-flare", num_last_images_to_include: 1 }, execution(signal));
     expect(result.metadata.edited).toBe(true);
   });
 
@@ -108,7 +182,7 @@ describe("direct native image tools", () => {
     }) as typeof fetch;
     const { tools } = await register(imagePlugin);
     const tool = tools.get("image_gen_nano");
-    const input = { prompt: "test", session_id: "series" };
+    const input = { prompt: "test", model: "gemini-3.1-flash-image", session_id: "series" };
     expect((await tool.execute(input, execution())).metadata.edited).toBe(false);
     expect((await tool.execute(input, execution())).metadata.edited).toBe(true);
     expect((await tool.execute(input, { ...execution(), sessionID: "ses-other" })).metadata.edited).toBe(false);
@@ -117,8 +191,8 @@ describe("direct native image tools", () => {
 
   test.each(["openai", "nano"])("%s provider/empty responses throw real V2 Tool.Error with redacted secrets", async provider => {
     const run = provider === "openai"
-      ? () => executeOpenAIImageGen({ prompt: "test" }, workspace, { config })
-      : () => executeNanoBananaImageGen({ prompt: "test" }, workspace, { config: nanoConfig });
+      ? () => executeOpenAIImageGen({ prompt: "test", model: "gpt-image-2.5-flare" }, workspace, { config })
+      : () => executeNanoBananaImageGen({ prompt: "test", model: "gemini-3.1-flash-image" }, workspace, { config: nanoConfig });
     globalThis.fetch = mock(respond({ error: config.apiKey }, 403)) as typeof fetch;
     try { await run(); throw new Error("expected failure"); } catch (error) {
       expect(error).toBeInstanceOf(ToolError);
@@ -134,20 +208,61 @@ describe("direct native image tools", () => {
     const fetcher = mock(respond({}));
     globalThis.fetch = fetcher as typeof fetch;
     await expect(executeOpenAIImageGen({ prompt: "x", model: "not-enabled" }, workspace, { config })).rejects.toMatchObject({ metadata: { error_code: "MODEL_NOT_CONFIGURED" } });
-    await expect(executeOpenAIImageGen({ prompt: "x", num_last_images_to_include: 1 }, workspace, { config })).rejects.toMatchObject({ metadata: { error_code: "INVALID_ARGUMENT" } });
+    await expect(executeOpenAIImageGen({ prompt: "x", model: "gpt-image-2.5-flare", num_last_images_to_include: 1 }, workspace, { config })).rejects.toMatchObject({ metadata: { error_code: "INVALID_ARGUMENT" } });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test.each(["openai", "nano"])("%s strictly rejects models outside a non-empty whitelist before provider calls", async provider => {
+    const engineConfig = provider === "openai" ? config : nanoConfig;
+    const run = provider === "openai" ? executeOpenAIImageGen : executeNanoBananaImageGen;
+    const fetcher = mock(respond({}));
+    globalThis.fetch = fetcher as typeof fetch;
+    for (const { model, whitelist } of [
+      { model: engineConfig.default_model, whitelist: ["allowed-first", "allowed-second"] },
+      { model: "not-configured", whitelist: [engineConfig.default_model] },
+      { model: engineConfig.default_model, whitelist: ["*"] },
+    ]) {
+      const requestedModel = model;
+      await expect(run({ prompt: "x", model }, workspace, { config: { ...engineConfig, whitelist } })).rejects.toMatchObject({
+        _tag: "Tool.Error",
+        message: JSON.stringify({
+          status: "error",
+          error_code: "MODEL_NOT_IN_WHITELIST",
+          message: `Model '${requestedModel}' is not in the allowed whitelist. Allowed models: ${whitelist.join(", ")}`,
+          requested_model: requestedModel,
+          whitelist,
+        }),
+        metadata: { error_code: "MODEL_NOT_IN_WHITELIST", requested_model: requestedModel, whitelist },
+      });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test.each(["openai", "nano"])("%s accepts allowed models and absent or empty whitelists", async provider => {
+    const engineConfig = provider === "openai" ? config : nanoConfig;
+    const run = provider === "openai" ? executeOpenAIImageGen : executeNanoBananaImageGen;
+    const fetcher = mock(respond(provider === "openai"
+      ? { data: [{ b64_json: png }] }
+      : { candidates: [{ content: { parts: [nanoImage] } }] }));
+    globalThis.fetch = fetcher as typeof fetch;
+    for (const whitelist of [undefined, [], [engineConfig.default_model]]) {
+      const result = await run({ prompt: "x", model: engineConfig.default_model }, workspace, { config: { ...engineConfig, whitelist } });
+      expect(result.metadata.model).toBe(engineConfig.default_model);
+    }
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   test.each(["image_gen", "image_gen_nano"])("%s registered execution propagates actual failure", async name => {
     const { tools } = await register(imagePlugin);
     globalThis.fetch = mock(respond({})) as typeof fetch;
-    await expect(tools.get(name).execute({ prompt: "test" }, execution())).rejects.toMatchObject({ _tag: "Tool.Error", metadata: { error_code: "EMPTY_RESULT" } });
+    const model = name === "image_gen" ? "gpt-image-2.5-flare" : "gemini-3.1-flash-image";
+    await expect(tools.get(name).execute({ prompt: "test", model }, execution())).rejects.toMatchObject({ _tag: "Tool.Error", metadata: { error_code: "EMPTY_RESULT" } });
   });
 
   test("invalid configuration errors do not quote embedded credentials", async () => {
     const { tools } = await register(imagePlugin);
     await writeFile(path.join(workspace, "opencode.json"), `{"apiKey":"${config.apiKey}", invalid}`);
-    try { await tools.get("image_gen").execute({ prompt: "test" }, execution()); throw new Error("expected failure"); } catch (error) {
+    try { await tools.get("image_gen").execute({ prompt: "test", model: "gpt-image-2.5-flare" }, execution()); throw new Error("expected failure"); } catch (error) {
       expect(error).toBeInstanceOf(ToolError);
       expect((error as Error).message).toContain("expected a valid JSON object");
       expect((error as Error).message).not.toContain(config.apiKey);
@@ -162,7 +277,7 @@ describe("direct native image tools", () => {
       await expect(readImage("outside/ref.png", workspace)).rejects.toThrow("inside the workspace");
       await symlink(outside, path.join(workspace, ".opencode"));
       globalThis.fetch = mock(respond({ data: [{ b64_json: png }] })) as typeof fetch;
-      await expect(executeOpenAIImageGen({ prompt: "x" }, workspace, { config })).rejects.toThrow("inside the workspace");
+      await expect(executeOpenAIImageGen({ prompt: "x", model: "gpt-image-2.5-flare" }, workspace, { config })).rejects.toThrow("inside the workspace");
     } finally { await rm(outside, { recursive: true, force: true }); }
   });
 
@@ -175,8 +290,8 @@ describe("direct native image tools", () => {
       throw reason;
     }) as typeof fetch;
     const run = provider === "openai"
-      ? executeOpenAIImageGen({ prompt: "x" }, workspace, { config, signal: controller.signal })
-      : executeNanoBananaImageGen({ prompt: "x" }, workspace, { config: nanoConfig, signal: controller.signal });
+      ? executeOpenAIImageGen({ prompt: "x", model: "gpt-image-2.5-flare" }, workspace, { config, signal: controller.signal })
+      : executeNanoBananaImageGen({ prompt: "x", model: "gemini-3.1-flash-image" }, workspace, { config: nanoConfig, signal: controller.signal });
     await expect(run).rejects.toBe(reason);
   });
 });

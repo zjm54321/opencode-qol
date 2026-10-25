@@ -17,7 +17,7 @@ export default Plugin.define({
         description: "Generate or edit images with configured OpenAI Image models (such as gpt-image-2.5-flare, gpt-image-2.5-sunburst). Saves workspace files and returns Markdown previews with generation metadata.",
         input: z.object({
           prompt: z.string().min(1).describe("Detailed description of the image to generate or edit."),
-          model: z.string().optional().describe("Optional specific model ID (e.g. 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'). Defaults to configured default."),
+          model: z.string().optional().describe("Explicit model ID required (e.g. 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'). Use image_models to list available models."),
           transparent_background: z.boolean().optional().describe("Whether the output should have a transparent background (PNG). Defaults to false."),
           referenced_image_paths: z.array(z.string()).optional().describe("Local image file paths for editing/inpainting."),
           num_last_images_to_include: z.number().int().min(0).max(5).optional().describe("Number of recent conversation images to reference (0-5)."),
@@ -43,7 +43,7 @@ export default Plugin.define({
         description: "Generate or edit images with Google Gemini / Nano Banana models (such as gemini-3.1-flash-image). Supports native aspect ratios and multi-image reference. Saves image locally and returns markdown link.",
         input: z.object({
           prompt: z.string().min(1).describe("Description of the image to generate or editing instruction."),
-          model: z.string().optional().describe("Optional model ID (e.g. 'gemini-3.1-flash-image'). Defaults to configured default."),
+          model: z.string().optional().describe("Explicit model ID required (e.g. 'gemini-3.1-flash-image'). Use image_models to list available models."),
           aspect_ratio: z.enum(["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "2:3", "3:2", "4:5", "5:4"]).optional().describe("Aspect ratio of the generated image. Defaults to '1:1'."),
           referenced_image_paths: z.array(z.string()).optional().describe("Local image file paths for character consistency or image-to-image."),
           session_id: z.string().optional().describe("Optional session ID for multi-turn character or world continuity."),
@@ -59,6 +59,42 @@ export default Plugin.define({
           } catch (error) {
             return imageFailure(error, execution.signal);
           }
+        },
+      });
+
+      editor.add({
+        name: "image_models",
+        options: { codemode: false },
+        description: "List available and configured image generation models, formatted like OpenCode models.",
+        input: z.object({
+          provider: z.enum(["all", "openai", "google"]).optional().default("all").describe("Filter by provider (all, openai, or google)."),
+        }).strict(),
+        async execute(input) {
+          const cwd = ctx.location?.directory || process.cwd();
+          const cfg = loadConfiguration(undefined, cwd);
+          const lines: string[] = [];
+          const models: Array<{ providerID: string; id: string }> = [];
+
+          if (input.provider === "all" || input.provider === "openai") {
+            const list = cfg.openai.whitelist?.length ? cfg.openai.whitelist : (cfg.openai.available_models ?? []);
+            for (const m of list) {
+              models.push({ providerID: "openai", id: m });
+              lines.push(`openai/${m}`);
+            }
+          }
+          if (input.provider === "all" || input.provider === "google") {
+            const list = cfg.nanobanana.whitelist?.length ? cfg.nanobanana.whitelist : (cfg.nanobanana.available_models ?? []);
+            for (const m of list) {
+              models.push({ providerID: "google", id: m });
+              lines.push(`google/${m}`);
+            }
+          }
+
+          lines.sort((a, b) => a.localeCompare(b));
+          return {
+            content: lines.length ? lines.join("\n") : "No image models available.",
+            metadata: { count: models.length, models },
+          };
         },
       });
     });

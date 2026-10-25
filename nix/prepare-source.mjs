@@ -310,9 +310,12 @@ await replaceOnce(internal, "  Permission.Service,", "  Permission.Service,\n  P
 await replaceOnce(internal, "  Permission.node,", "  Permission.node,\n  PersistentPty.node,")
 await replaceOnce(internal, "post: resolve(post),", "post: [...resolve([...post, NativePtyPlugin]), ...QolPlugins],")
 
+const tuiOmoTarget = path.join(source, "packages/tui/src/plugin/omo-tui.js")
+await fs.copyFile(path.join(omo, "dist/tui2.js"), tuiOmoTarget)
+
 const tuiBuiltins = path.join(source, "packages/tui/src/plugin/builtins.ts")
 await replaceOnce(tuiBuiltins, 'import Merman from "@opencode/merman/plugin"',
-  'import Merman from "@opencode/merman/plugin"\nimport OmoTui from "../../../core/src/plugin/qol/vendor/oh-my-opencode-slim/dist/tui2.js"')
+  'import Merman from "@opencode/merman/plugin"\nimport OmoTui from "./omo-tui.js"')
 await replaceOnce(tuiBuiltins, '  Latex,', '  Latex,\n  OmoTui,')
 
 // Embed a real lowest-priority document, leaving user/project/managed config in

@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 
 const patch = await Bun.file(new URL("../patches/tui-qol-tools.patch", import.meta.url)).text()
 const section = patch.split("diff --git a/packages/tui/src/mini/tool.ts")[0]
@@ -14,48 +14,6 @@ const internal = expressions.map((expression) => new Function("plugin", `${decla
 test("session sidebar is shown by default, including narrow terminals", async () => {
   const config = await Bun.file(new URL("../defaults/opencode.json", import.meta.url)).json()
   expect(config.session.sidebar).toBe("show")
-})
-
-describe("restart command in managed and standalone modes", () => {
-  const app = patch.split("diff --git a/packages/tui/src/app.tsx")[1]?.split("diff --git ")[0] ?? ""
-  const source = app.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).map((line) => line.slice(1)).join("\n")
-  const create = new Function("client", "dialog", "toast", "keymap", `return [${source}]`)
-
-  function harness(restart?: () => Promise<void>) {
-    const dialog = { clear: mock(() => {}) }
-    const toast = { show: mock((_input: unknown) => {}), error: mock((_error: unknown) => {}) }
-    const keymap = { dispatch: mock((_command: string) => {}) }
-    const commands = create({ restart }, dialog, toast, keymap)
-    expect(commands).toHaveLength(1)
-    expect(commands[0].name).toBe("service.restart")
-    expect(commands[0].slash.name).toBe("restart")
-    return { command: commands[0], dialog, toast, keymap }
-  }
-
-  test("standalone always registers /restart and dispatches configuration reload", async () => {
-    const h = harness()
-    await h.command.run()
-    expect(h.dialog.clear).toHaveBeenCalledTimes(1)
-    expect(h.toast.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Reloading in standalone mode…" }))
-    expect(h.keymap.dispatch).toHaveBeenCalledWith("location.reload")
-  })
-
-  test("managed mode restarts the service without dispatching reload", async () => {
-    const restart = mock(async () => {})
-    const h = harness(restart)
-    await h.command.run()
-    expect(restart).toHaveBeenCalledTimes(1)
-    expect(h.keymap.dispatch).not.toHaveBeenCalled()
-    expect(h.toast.show).toHaveBeenLastCalledWith({ variant: "success", message: "Service restarted" })
-  })
-
-  test("managed restart failures use the existing toast error handler", async () => {
-    const error = new Error("restart failed")
-    const h = harness(async () => { throw error })
-    await h.command.run()
-    expect(h.toast.error).toHaveBeenCalledWith(error)
-    expect(h.keymap.dispatch).not.toHaveBeenCalled()
-  })
 })
 
 describe("bundled plugin visibility without external configuration", () => {

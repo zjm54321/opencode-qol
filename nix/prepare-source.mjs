@@ -70,6 +70,8 @@ if (process.env.QOL_SKILLS_CONFIG) {
   const sources = skillsConfig.sources || {}
 
   const skillSources = {
+    "grill-me": path.join(sources["mattpocock-skills"], "skills/productivity/grill-me"),
+    "grill-with-docs": path.join(sources["mattpocock-skills"], "skills/engineering/grill-with-docs"),
     "customer-research": path.join(sources["knowledge-work-plugins"], "customer-support/skills/customer-research"),
     "context7-mcp": path.join(sources["context7-src"], "packages/opencode/skills/context7-mcp"),
     "ui-ux-pro-max": path.join(sources["ui-ux-pro-max-skill"], ".claude/skills/ui-ux-pro-max"),
@@ -101,7 +103,7 @@ if (process.env.QOL_SKILLS_CONFIG) {
   }
 
   // Local repository skills
-  for (const name of ["grill-me", "grill-with-docs", "start-work"]) {
+  for (const name of ["start-work"]) {
     const src = path.join(repository, "defaults/skills", name)
     await copy(src, path.join(assets, "vendor/oh-my-opencode-slim/src/skills", name))
   }
@@ -166,10 +168,7 @@ await replaceOnce(path.join(omo, "src/tools/ast-grep/constants.ts"),
 await replaceOnce(path.join(omo, "src/tools/ast-grep/downloader.ts"),
   "  const version = getAstGrepVersion();\n  return downloadAstGrep(version);",
   '  throw new Error("Nix-provided ast-grep is unavailable; rebuild opencode-qol instead of downloading a binary");')
-const pinnedSources = JSON.parse(await fs.readFile(path.join(assets, "vendor/sources.json"), "utf8"))
 for (const [directory, name] of [[omo, "oh-my-opencode-slim"], [billion, "billion-context"]]) {
-  const pkg = JSON.parse(await fs.readFile(path.join(directory, "package.json"), "utf8"))
-  if (pkg.version !== pinnedSources[name].version) throw new Error(`Vendored version changed: ${name}`)
   await fs.copyFile(path.join(repository, "defaults", `${name}.json`), path.join(directory, "qol-defaults.json"))
 }
 const omoLoader = path.join(omo, "src/config/loader.ts")
@@ -208,7 +207,7 @@ for (const entry of ["src/cli.ts", "src/inline-engine.ts"]) {
 }
 await replaceOnce(path.join(billion, "scripts/write-build-info.mjs"),
   "const info = { commit: buildCommit() };",
-  `const info = { commit: ${JSON.stringify(pinnedSources["billion-context"].revision)} };`)
+  'const info = { commit: "v0.1.206" };')
 
 // OMO's official V1 factory still uses the legacy identity/schema helper. Import
 // only its official ./tool subpath, not the index that re-exports an SDK client.

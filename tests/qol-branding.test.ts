@@ -127,38 +127,3 @@ describe("patch scope", () => {
     expect(result.status).toBe(0);
   });
 });
-
-describe("branding assets", () => {
-  async function ihdr(file: string) {
-    const bytes = new Uint8Array(await readFile(path.join(ROOT, "assets/branding", file)));
-    expect([...bytes.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
-    const view = new DataView(bytes.buffer, bytes.byteOffset);
-    return { width: view.getUint32(16), height: view.getUint32(20), colorType: bytes[25] };
-  }
-
-  test("official dark and light SVGs are rendered at 6x with RGBA transparency", async () => {
-    const dark = await ihdr("opencode-qol-logo-dark.png");
-    expect(dark.colorType).toBe(6);
-    expect(dark.width).toBe(1404);
-    expect(dark.height).toBe(252);
-
-    const light = await ihdr("opencode-qol-logo-light.png");
-    expect(light.colorType).toBe(6);
-    expect(light.width).toBe(1404);
-    expect(light.height).toBe(252);
-
-    const def = await ihdr("opencode-qol-logo.png");
-    expect(def).toEqual(dark);
-    expect(await readFile(path.join(ROOT, "assets/branding/opencode-qol-logo.png"))).toEqual(
-      await readFile(path.join(ROOT, "assets/branding/opencode-qol-logo-dark.png")),
-    );
-
-    for (const theme of ["dark", "light"]) {
-      const svg = await readFile(path.join(ROOT, `assets/branding/opencode-qol-logo-${theme}.svg`), "utf8");
-      expect(svg).toContain('width="234" height="42" viewBox="0 0 234 42"');
-      expect(svg).not.toMatch(/qol/i);
-    }
-
-    expect(existsSync(path.join(ROOT, "assets/branding/SOURCE.md"))).toBe(true);
-  });
-});

@@ -70,6 +70,20 @@
       url = "github:obra/the-elements-of-style";
       flake = false;
     };
+
+    # MCP servers fixed package set & vendor upstreams
+    mcp-nixpkgs = {
+      url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
+      flake = false;
+    };
+    oh-my-opencode-slim-src = {
+      url = "github:alvinunreal/oh-my-opencode-slim";
+      flake = false;
+    };
+    billion-context-src = {
+      url = "github:ranxianglei/billion-context";
+      flake = false;
+    };
   };
 
   outputs = { self, nixpkgs, opencode, pty-src, ghostty-src, ... }@inputs:
@@ -104,6 +118,7 @@
       };
       package = import ./nix/package.nix {
         inherit pkgs opencode pluginNodeModules skillInputs;
+        mcpNixpkgs = inputs.mcp-nixpkgs;
         nativePty = pkgs.callPackage ./nix/pty-daemon.nix { inherit pty-src ghostty-src; };
         inherit (pkgs) lib;
       };

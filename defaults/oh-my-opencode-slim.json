@@ -103,7 +103,7 @@
         ]
       }
     },
-    "defaultwithfallback": {
+    "default_with_fallback": {
       "orchestrator": {
         "model": [
           { "id": "anthropic/claude-opus-5-5", "variant": "high" },
@@ -138,7 +138,6 @@
         "model": [
           { "id": "openai/gpt-6-astra", "variant": "max" },
           { "id": "anthropic/claude-opus-5-5", "variant": "max" },
-          { "id": "openrouter/deepseek/deepseek-v4.1-flash", "variant": "max" },
           { "id": "openrouter/z-ai/glm-5.3", "variant": "max" }
         ],
         "skills": [
@@ -173,7 +172,8 @@
         "model": [
           { "id": "anthropic/claude-opus-5-5", "variant": "high" },
           { "id": "google/gemini-4-argon", "variant": "high" },
-          { "id": "openrouter/moonshotai/kimi-k3", "variant": "high" },
+          { "id": "openrouter/moonshotai/kimi-k3.1-pro", "variant": "high" },
+          { "id": "openrouter/qwen/qwen-3.8-max", "variant": "high" },
           { "id": "google/gemini-3.8-flash", "variant": "high" }
         ],
         "skills": [
@@ -238,7 +238,7 @@
         "alvin/documenter"
       ]
     },
-    "defaultwithfallback": {
+    "default_with_fallback": {
       "agents": [
         "alvin/documenter"
       ]
@@ -260,18 +260,24 @@
           "variant": "max"
         }
       },
-      "defaultwithfallback": {
+      "default_with_fallback": {
         "alpha": {
-          "model": "openai/gpt-6-astra",
-          "variant": "max"
+          "model": [
+            { "id": "openai/gpt-6-astra", "variant": "max" },
+            { "id": "openrouter/deepseek/deepseek-v4.1-flash", "variant": "max" }
+          ]
         },
         "beta": {
-          "model": "google/gemini-4-argon",
-          "variant": "high"
+          "model": [
+            { "id": "google/gemini-4-argon", "variant": "high" },
+            { "id": "openrouter/moonshotai/kimi-k3.1-pro", "variant": "max" }
+          ]
         },
         "gamma": {
-          "model": "anthropic/claude-opus-5-5",
-          "variant": "max"
+          "model": [
+            { "id": "anthropic/claude-opus-5-5", "variant": "max" },
+            { "id": "openrouter/z-ai/glm-5.3", "variant": "max" }
+          ]
         }
       }
     }

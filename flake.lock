@@ -48,6 +48,22 @@
         "type": "github"
       }
     },
+    "billion-context-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792979357,
+        "narHash": "sha256-4XRps2re2dJVguOy0E0IuWEqWOGzN5m2Thlu4WfrJI8=",
+        "owner": "ranxianglei",
+        "repo": "billion-context",
+        "rev": "1b0997e38255522a1b8fa58f8b8ec8a51003d0d6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ranxianglei",
+        "repo": "billion-context",
+        "type": "github"
+      }
+    },
     "cloudflare-skills": {
       "flake": false,
       "locked": {
@@ -177,6 +193,23 @@
         "type": "github"
       }
     },
+    "mcp-nixpkgs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792502884,
+        "narHash": "sha256-IoNisKcGbUjdd45qCqywGMCYmZ5EnkxezvLII0FWwNA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "02c087f3fe673c9e317f206a627cb6b910336dbe",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "02c087f3fe673c9e317f206a627cb6b910336dbe",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1790510107,
@@ -190,6 +223,22 @@
         "owner": "NixOS",
         "ref": "nixpkgs-unstable",
         "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "oh-my-opencode-slim-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792924001,
+        "narHash": "sha256-MoNSbsicSjJDZd3XgluwfBEk5J0/jmFQc5cMIH+K4q8=",
+        "owner": "alvinunreal",
+        "repo": "oh-my-opencode-slim",
+        "rev": "f7b79c389752170ac5774cb1648d31b4be93e58d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "alvinunreal",
+        "repo": "oh-my-opencode-slim",
         "type": "github"
       }
     },
@@ -234,6 +283,7 @@
         "anthropic-skills": "anthropic-skills",
         "apollographql-skills": "apollographql-skills",
         "better-icons": "better-icons",
+        "billion-context-src": "billion-context-src",
         "cloudflare-skills": "cloudflare-skills",
         "context7-src": "context7-src",
         "ghostty-src": "ghostty-src",
@@ -242,10 +292,12 @@
         "knowledge-work-plugins": "knowledge-work-plugins",
         "make-interfaces-feel-better": "make-interfaces-feel-better",
         "mattpocock-skills": "mattpocock-skills",
+        "mcp-nixpkgs": "mcp-nixpkgs",
         "nixpkgs": [
           "opencode",
           "nixpkgs"
         ],
+        "oh-my-opencode-slim-src": "oh-my-opencode-slim-src",
         "opencode": "opencode",
         "pty-src": "pty-src",
         "the-elements-of-style": "the-elements-of-style",

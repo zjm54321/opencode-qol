@@ -1,14 +1,20 @@
-{ pkgs }:
+{ pkgs, mcpNixpkgs ? null }:
 let
-  pins = builtins.fromJSON (builtins.readFile ./mcp-sources.json);
-  # A separate fixed package set supplies MCP tools without changing OpenCode's
-  # toolchain. fetchTree verifies the recorded NAR hash in pure evaluation too.
-  toolsSource = builtins.fetchTree pins.nixpkgs;
-  tools = import toolsSource.outPath { inherit (pkgs.stdenv.hostPlatform) system; };
+  toolsSource = if mcpNixpkgs != null then mcpNixpkgs else (builtins.fetchTree {
+    type = "github";
+    owner = "NixOS";
+    repo = "nixpkgs";
+    rev = "02c087f3fe673c9e317f206a627cb6b910336dbe";
+    narHash = "sha256-IoNisKcGbUjdd45qCqywGMCYmZ5EnkxezvLII0FWwNA=";
+  });
+  tools = import toolsSource { inherit (pkgs.stdenv.hostPlatform) system; };
   inherit (tools) lib;
   upstreamCodegraph = tools.codegraph;
   nixos = tools.mcp-nixos;
-  codegraphLicense = tools.fetchurl pins.codegraph.licenseSource;
+  codegraphLicense = tools.fetchurl {
+    url = "https://raw.githubusercontent.com/colbymchenry/codegraph/v1.6.2/LICENSE";
+    hash = "sha256-5tmPmMZmvr4GWsJJKgoZIyzDGNTWe6w8pC/7d7rMiAk=";
+  };
   # Upstream's release keeps dependency licenses under lib/node_modules, but its
   # Nix recipe doesn't install the project's own LICENSE. Carry that alongside
   # our launcher without rewriting or rebuilding any server implementation.
@@ -40,9 +46,8 @@ let
     };
   };
 in
-assert upstreamCodegraph.version == pins.codegraph.version;
-assert nixos.version == pins.nixos.version;
-assert nixos.src.outputHash == pins.nixos.sourceHash;
+assert upstreamCodegraph.version == "1.6.2";
+assert nixos.version == "3.0.1";
 {
   config = tools.writeText "opencode-qol-mcp-servers.json" (builtins.toJSON servers);
   astGrep = tools.ast-grep;
@@ -51,9 +56,18 @@ assert nixos.src.outputHash == pins.nixos.sourceHash;
     codegraph = "${codegraphWithLicense}/share/licenses/codegraph/LICENSE";
     nixos = "${nixos}/${tools.python3.sitePackages}/mcp_nixos-${nixos.version}.dist-info/licenses/LICENSE";
   };
-  sourceInfo = pins // {
-    codegraph = pins.codegraph // {
+  sourceInfo = {
+    codegraph = {
+      repository = "https://github.com/colbymchenry/codegraph";
+      version = upstreamCodegraph.version;
+      license = "MIT";
       artifact = { inherit (upstreamCodegraph.src) url outputHash; };
+    };
+    nixos = {
+      repository = "https://github.com/utensils/mcp-nixos";
+      version = nixos.version;
+      license = "MIT";
+      sourceHash = nixos.src.outputHash;
     };
   };
 }

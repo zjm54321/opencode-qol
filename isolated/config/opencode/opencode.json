@@ -44,7 +44,9 @@
       "whitelist": [
         "deepseek/deepseek-v4.1-flash",
         "moonshotai/kimi-k3",
+        "moonshotai/kimi-k3.1-pro",
         "openai/gpt-oss-20b",
+        "qwen/qwen-3.8-max",
         "z-ai/glm-5.3",
         "z-ai/glm-5.3-flash"
       ]

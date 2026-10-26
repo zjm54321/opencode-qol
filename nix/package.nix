@@ -5,6 +5,7 @@
   pluginNodeModules,
   nativePty,
   skillInputs ? { },
+  mcpNixpkgs ? null,
   modelPolicies ? { },
   ...
 }:
@@ -42,7 +43,7 @@ let
     originalProviders = modelPolicies;
   };
   gptTaste = import ../plugins/gpt-taste { inherit lib pkgs; };
-  mcpServers = import ./mcp-servers.nix { inherit pkgs; };
+  mcpServers = import ./mcp-servers.nix { inherit pkgs mcpNixpkgs; };
 in
 assert mcpServers.astGrep.version == (builtins.fromJSON (builtins.readFile ../package.json)).dependencies."@ast-grep/cli";
 upstream.overrideAttrs (old: {
@@ -107,7 +108,6 @@ upstream.overrideAttrs (old: {
     cp ${builtins.toFile "opencode-qol-mcp-SOURCES.json" (builtins.toJSON mcpServers.sourceInfo)} "$out/share/doc/opencode-qol-mcp/SOURCES.json"
     cp -a "$QOL_ASSET_ROOT/." "$out/lib/opencode-qol/"
     cp -a "$QOL_ASSET_ROOT/defaults" "$out/share/opencode-qol/defaults"
-    cp -R ${../assets/branding} "$out/share/opencode-qol/branding"
     cp ${../README.md} "$out/share/opencode-qol/README.md"
     cp ${../LICENSE} "$out/lib/opencode-qol/LICENSE"
     cp ${../THIRD_PARTY_NOTICES.md} "$out/lib/opencode-qol/THIRD_PARTY_NOTICES.md"

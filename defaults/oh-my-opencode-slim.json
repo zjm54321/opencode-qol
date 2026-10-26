@@ -1,7 +1,6 @@
 {
   "$schema": "https://unpkg.com/oh-my-opencode-slim@3.0.6/oh-my-opencode-slim.schema.json",
   "autoUpdate": false,
-  "preset": "default",
   "presets": {
     "default": {
       "orchestrator": {
@@ -53,7 +52,8 @@
         "mcps": [
           "codegraph",
           "context7",
-          "gh_grep"
+          "gh_grep",
+          "nixos"
         ]
       },
       "designer": {
@@ -80,7 +80,8 @@
           "skill-creator"
         ],
         "mcps": [
-          "codegraph"
+          "codegraph",
+          "nixos"
         ]
       },
       "council": {
@@ -165,7 +166,8 @@
         "mcps": [
           "codegraph",
           "context7",
-          "gh_grep"
+          "gh_grep",
+          "nixos"
         ]
       },
       "designer": {
@@ -201,7 +203,8 @@
           "skill-creator"
         ],
         "mcps": [
-          "codegraph"
+          "codegraph",
+          "nixos"
         ]
       },
       "council": {
@@ -230,6 +233,108 @@
           "codegraph"
         ]
       }
+    },
+    "openai": {
+      "orchestrator": {
+        "model": "openai/gpt-6.1-sol",
+        "variant": "xhigh",
+        "skills": [
+          "*",
+          "!customer-research",
+          "!context7-mcp",
+          "!ui-ux-pro-max",
+          "!make-interfaces-feel-better",
+          "!better-icons",
+          "!python-code-style",
+          "!typescript-advanced-types",
+          "!rust-best-practices",
+          "!web-perf",
+          "!code-review-excellence",
+          "!architecture",
+          "!simplify",
+          "!humanizer-zh",
+          "!humanizer",
+          "!writing-clearly-and-concisely"
+        ],
+        "mcps": [
+          "codegraph",
+          "nixos"
+        ]
+      },
+      "oracle": {
+        "model": "openai/gpt-6-astra",
+        "variant": "max",
+        "skills": [
+          "web-perf",
+          "code-review-excellence",
+          "architecture",
+          "simplify"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "explorer": {
+        "model": "openai/gpt-6-luna",
+        "variant": "xhigh",
+        "skills": [
+          "customer-research",
+          "context7-mcp"
+        ],
+        "mcps": [
+          "codegraph",
+          "context7",
+          "gh_grep",
+          "nixos"
+        ]
+      },
+      "designer": {
+        "model": "openai/gpt-6.1-sol",
+        "variant": "high",
+        "skills": [
+          "ui-ux-pro-max",
+          "make-interfaces-feel-better",
+          "better-icons",
+          "image-generation"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "fixer": {
+        "model": "openai/gpt-6.1-sol",
+        "variant": "xhigh",
+        "skills": [
+          "python-code-style",
+          "typescript-advanced-types",
+          "rust-best-practices",
+          "modern-python",
+          "skill-creator"
+        ],
+        "mcps": [
+          "codegraph",
+          "nixos"
+        ]
+      },
+      "council": {
+        "model": "openai/gpt-6.1-sol",
+        "variant": "max",
+        "mcps": [
+          "codegraph"
+        ]
+      },
+      "documenter": {
+        "model": "openai/gpt-6-luna",
+        "variant": "max",
+        "skills": [
+          "humanizer-zh",
+          "humanizer",
+          "writing-clearly-and-concisely"
+        ],
+        "mcps": [
+          "codegraph"
+        ]
+      }
     }
   },
   "marketplacePresets": {
@@ -239,6 +344,11 @@
       ]
     },
     "default_with_fallback": {
+      "agents": [
+        "alvin/documenter"
+      ]
+    },
+    "openai": {
       "agents": [
         "alvin/documenter"
       ]
@@ -278,6 +388,12 @@
             { "id": "anthropic/claude-opus-5-5", "variant": "max" },
             { "id": "openrouter/z-ai/glm-5.3", "variant": "max" }
           ]
+        }
+      },
+      "openai": {
+        "alpha": {
+          "model": "openai/gpt-6-astra",
+          "variant": "max"
         }
       }
     }
@@ -329,7 +445,8 @@
       "mcps": [
         "codegraph",
         "context7",
-        "gh_grep"
+        "gh_grep",
+        "nixos"
       ]
     },
     "designer": {
@@ -352,7 +469,8 @@
         "skill-creator"
       ],
       "mcps": [
-        "codegraph"
+        "codegraph",
+        "nixos"
       ]
     },
     "council": {

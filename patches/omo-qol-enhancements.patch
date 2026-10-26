@@ -1,0 +1,272 @@
+# ==============================================================================
+# Patch: omo-qol-enhancements.patch
+# 模块: vendor/oh-my-opencode-slim (src/cli/custom-skills-registry.ts, src/marketplace/preflight.ts, src/marketplace/store.ts)
+#
+# 【改动内容】
+# 1. 内置技能集中注册：在 custom-skills-registry.ts 中追加声明由 Nix Flake 固化的 20 项专业与工程
+#    技能（包括 start-work, skill-creator, web-perf, ui-ux-pro-max, humanizer-zh 等），并精准分配
+#    各 Agent 的允许列表（allowedAgents）。
+# 2. Marketplace 技能预检闭环：在 preflight.ts 的 discoverPreflightSkills 中将 CUSTOM_SKILLS 自动
+#    合并入就绪技能列表，确保 Marketplace 包声明技能依赖时无需额外在用户磁盘生成冗余副本。
+# 3. 原生包内 Marketplace 只读回退支持：在 store.ts 中引入 bundledPaths 机制，当用户运行目录下的
+#    XDG 数据目录未安装 lockfile 时，优先只读读取 Nix 固化的 defaults/marketplace 锁文件与包缓存，
+#    实现无需网络、零副作用、支持原生 sha256 验证的开箱即用体验（如 alvin/documenter）。
+#
+# 【存在理由】
+# 1. 彻底贯彻“零运行时下载、零外部依赖”的 Nix 原生集成哲学。
+# 2. 避免在 OMO Agent 核心源码树中硬编码非官方角色，保证 OMO 未来升级时无代码冲突。
+#
+# 【保障机制】
+# 所有改动完全基于 OMO 原生的 Registry、Store 与 Loader 机制扩展，通过纯 Nix 构建期 patch 应用。
+# ==============================================================================
+diff --git a/src/cli/custom-skills-registry.ts b/src/cli/custom-skills-registry.ts
+index fc0c7fa..91ca5ff 100644
+--- a/src/cli/custom-skills-registry.ts
++++ b/src/cli/custom-skills-registry.ts
+@@ -95,4 +95,124 @@ export const CUSTOM_SKILLS: CustomSkill[] = [
+     allowedAgents: ['orchestrator'],
+     sourcePath: 'src/skills/worktrees',
+   },
++  {
++    name: 'start-work',
++    description: 'Bootstrap new projects with workspace relocation, Nix Flake, Git, skills, licensing, and server reload',
++    allowedAgents: ['orchestrator'],
++    sourcePath: 'src/skills/start-work',
++  },
++  {
++    name: 'grill-me',
++    description: 'Grill the user about their problem or idea before writing code',
++    allowedAgents: ['orchestrator'],
++    sourcePath: 'src/skills/grill-me',
++  },
++  {
++    name: 'grill-with-docs',
++    description: 'Grill the user about their problem while actively consulting documentation',
++    allowedAgents: ['orchestrator'],
++    sourcePath: 'src/skills/grill-with-docs',
++  },
++  {
++    name: 'image-generation',
++    description: 'Generate or edit images with AI models',
++    allowedAgents: ['orchestrator', 'designer'],
++    sourcePath: 'src/skills/image-generation',
++  },
++  {
++    name: 'skill-creator',
++    description: 'Create new skills, modify and improve existing skills, and measure skill performance',
++    allowedAgents: ['orchestrator', 'fixer'],
++    sourcePath: 'src/skills/skill-creator',
++  },
++  {
++    name: 'customer-research',
++    description: 'Customer interview and feedback research synthesis',
++    allowedAgents: ['explorer'],
++    sourcePath: 'src/skills/customer-research',
++  },
++  {
++    name: 'context7-mcp',
++    description: 'Up-to-date documentation and code examples via Context7 MCP',
++    allowedAgents: ['explorer'],
++    sourcePath: 'src/skills/context7-mcp',
++  },
++  {
++    name: 'ui-ux-pro-max',
++    description: 'UI/UX design intelligence and best practices',
++    allowedAgents: ['designer'],
++    sourcePath: 'src/skills/ui-ux-pro-max',
++  },
++  {
++    name: 'make-interfaces-feel-better',
++    description: 'Interaction design and interface refinement techniques',
++    allowedAgents: ['designer'],
++    sourcePath: 'src/skills/make-interfaces-feel-better',
++  },
++  {
++    name: 'better-icons',
++    description: 'Icon search and design guidelines',
++    allowedAgents: ['designer'],
++    sourcePath: 'src/skills/better-icons',
++  },
++  {
++    name: 'python-code-style',
++    description: 'Modern Python idioms, formatting, typing, and conventions',
++    allowedAgents: ['fixer'],
++    sourcePath: 'src/skills/python-code-style',
++  },
++  {
++    name: 'typescript-advanced-types',
++    description: 'TypeScript type engineering and advanced pattern guidelines',
++    allowedAgents: ['fixer'],
++    sourcePath: 'src/skills/typescript-advanced-types',
++  },
++  {
++    name: 'rust-best-practices',
++    description: 'Idiomatic Rust architecture, memory safety, and concurrency practices',
++    allowedAgents: ['fixer'],
++    sourcePath: 'src/skills/rust-best-practices',
++  },
++  {
++    name: 'modern-python',
++    description: 'Modern Python development practices and tooling',
++    allowedAgents: ['orchestrator', 'fixer'],
++    sourcePath: 'src/skills/modern-python',
++  },
++  {
++    name: 'web-perf',
++    description: 'Web performance analysis, Core Web Vitals, and optimization strategies',
++    allowedAgents: ['oracle'],
++    sourcePath: 'src/skills/web-perf',
++  },
++  {
++    name: 'code-review-excellence',
++    description: 'High-leverage code review principles and checklist',
++    allowedAgents: ['oracle'],
++    sourcePath: 'src/skills/code-review-excellence',
++  },
++  {
++    name: 'architecture',
++    description: 'Software architecture design, system trade-offs, and boundary definitions',
++    allowedAgents: ['oracle'],
++    sourcePath: 'src/skills/architecture',
++  },
++  {
++    name: 'humanizer-zh',
++    description: 'Chinese text naturalization and AI tone removal',
++    allowedAgents: ['documenter'],
++    sourcePath: 'src/skills/humanizer-zh',
++  },
++  {
++    name: 'humanizer',
++    description: 'Remove AI patterns and make text sound authentic and natural',
++    allowedAgents: ['documenter'],
++    sourcePath: 'src/skills/humanizer',
++  },
++  {
++    name: 'writing-clearly-and-concisely',
++    description: 'Style guide for clear, concise, and vigorous prose',
++    allowedAgents: ['documenter'],
++    sourcePath: 'src/skills/writing-clearly-and-concisely',
++  },
+ ];
+diff --git a/src/marketplace/preflight.ts b/src/marketplace/preflight.ts
+index 0f76a8e..177fa8f 100644
+--- a/src/marketplace/preflight.ts
++++ b/src/marketplace/preflight.ts
+@@ -10,6 +10,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+ import { parse as parseJsonc } from 'jsonc-parser';
+ import { z } from 'zod';
+ import type { RuntimeConfig } from '../config/runtime';
++import { CUSTOM_SKILLS } from '../cli/custom-skills-registry';
+ import type { MarketplacePackageManifest } from './schemas';
+ import { parseSkillFrontmatterName } from './skill-frontmatter';
+ 
+@@ -322,7 +323,9 @@ export function discoverPreflightSkills(
+   extraDirectories: readonly string[] = [],
+ ): string[] {
+   const disabled = new Set(runtime.disabledSkills);
+-  return discoverOnDiskSkillNames(projectDirectory, extraDirectories).filter(
++  const bundled = CUSTOM_SKILLS.map((s) => s.name);
++  const onDisk = discoverOnDiskSkillNames(projectDirectory, extraDirectories);
++  return Array.from(new Set([...bundled, ...onDisk])).filter(
+     (name) => !disabled.has(name),
+   );
+ }
+diff --git a/src/marketplace/store.ts b/src/marketplace/store.ts
+index 3eccae0..28bb83a 100644
+--- a/src/marketplace/store.ts
++++ b/src/marketplace/store.ts
+@@ -220,8 +220,27 @@ function removeTree(target: string): void {
+   syncDirectory(path.dirname(target));
+ }
+ 
++function resolveBundledMarketplacePaths(): MarketplacePaths | undefined {
++  const envPath = process.env.OPENCODE_BUNDLED_MARKETPLACE?.trim();
++  const candidates = [
++    envPath,
++    path.join(__dirname, '..', '..', 'defaults', 'marketplace'),
++    path.join(__dirname, '..', 'defaults', 'marketplace'),
++    path.join(__dirname, 'defaults', 'marketplace'),
++    '/share/opencode-qol/defaults/marketplace',
++  ].filter((p): p is string => Boolean(p && pathExists(p)));
++
++  for (const candidate of candidates) {
++    if (pathExists(path.join(candidate, 'lock.json'))) {
++      return getMarketplacePaths(candidate);
++    }
++  }
++  return undefined;
++}
++
+ export class MarketplaceStore {
+   readonly paths: MarketplacePaths;
++  readonly bundledPaths?: MarketplacePaths;
+   private readonly pluginVersion: string;
+   private readonly lockOptions: MarketplaceLockOptions;
+   private pendingLeaseCleanup: MarketplaceLease | undefined;
+@@ -238,6 +257,7 @@ export class MarketplaceStore {
+     this.pluginVersion = pluginVersion.data;
+     this.lockOptions = normalizeLockOptions(options.lock ?? {});
+     this.paths = getMarketplacePaths(options.rootDir);
++    this.bundledPaths = resolveBundledMarketplacePaths();
+   }
+ 
+   getLockfile(): MarketplaceLockfile {
+@@ -638,6 +658,13 @@ export class MarketplaceStore {
+       serialized = fs.readFileSync(this.paths.lockfilePath, 'utf8');
+     } catch (error) {
+       if (errnoCode(error) === 'ENOENT') {
++        if (this.bundledPaths && pathExists(this.bundledPaths.lockfilePath)) {
++          try {
++            const bundledRaw = fs.readFileSync(this.bundledPaths.lockfilePath, 'utf8');
++            const bundledParsed = MarketplaceLockfileSchema.safeParse(JSON.parse(bundledRaw));
++            if (bundledParsed.success) return bundledParsed.data;
++          } catch {}
++        }
+         return {
+           schemaVersion: MARKETPLACE_LOCKFILE_SCHEMA_VERSION,
+           packages: {},
+@@ -662,6 +689,21 @@ export class MarketplaceStore {
+         `Marketplace lockfile is invalid: ${parsed.error.message}`,
+       );
+     }
++    if (this.bundledPaths && pathExists(this.bundledPaths.lockfilePath)) {
++      try {
++        const bundledRaw = fs.readFileSync(this.bundledPaths.lockfilePath, 'utf8');
++        const bundledParsed = MarketplaceLockfileSchema.safeParse(JSON.parse(bundledRaw));
++        if (bundledParsed.success) {
++          return {
++            ...parsed.data,
++            packages: {
++              ...bundledParsed.data.packages,
++              ...parsed.data.packages,
++            },
++          };
++        }
++      } catch {}
++    }
+     return parsed.data;
+   }
+ 
+@@ -716,11 +758,21 @@ export class MarketplaceStore {
+   ): StoredMarketplacePackage {
+     const entry = lockfile.packages[id];
+     if (!entry) throw new MarketplaceIntegrityError(`${id} is not installed`);
+-    const versionPath = packageVersionPath(
++    let versionPath = packageVersionPath(
+       this.paths,
+       id,
+       entry.manifestVersion,
+     );
++    if (!pathExists(versionPath) && this.bundledPaths) {
++      const candidate = packageVersionPath(
++        this.bundledPaths,
++        id,
++        entry.manifestVersion,
++      );
++      if (pathExists(candidate)) {
++        versionPath = candidate;
++      }
++    }
+     let bundle: MarketplacePackageBundle;
+     let sidecar: string;
+     try {

@@ -1,3 +1,25 @@
+# ==============================================================================
+# Patch: native-pty-compat.patch
+# 模块: packages/core/src/persistent-pty/daemon.ts, packages/core/src/persistent-pty/index.ts, packages/schema/src/persistent-pty.ts
+#
+# 【改动内容】
+# 1. 协议升版：将 OpenCode Persistent PTY 通信协议从 Version 7 升级至 Version 8。
+# 2. 协议载荷扩充：WireTerminal 与 WireResponse 扩充 tool 元数据、created_at 时间戳、exit_signal、
+#    killed、timed_out、termination_error 字段以及 replay 游标回放能力。
+# 3. Schema 容错修复：针对 PersistentPty.Info 中的 exitSignal 字段，由原本不可为 undefined 的结构修复为
+#    Schema.optionalKey(Schema.UndefinedOr(Schema.NullOr(Schema.String)))，并在 toInfo 序列化时避免
+#    向对象注入 undefined 键。
+#
+# 【存在理由】
+# 1. OpenCode 原生的 PTY 守护进程设计仅针对基础交互终端，无法承载作为高级 Agent 工具调用时所必需的
+#    状态追踪（如超时杀进程、退出信号识别、输出流历史游标重放）。
+# 2. 上游 Effect Schema 校验对反序列化参数极其严苛，在终端仍处于运行态而 exitSignal 缺省（undefined）时，
+#    原版代码会直接触发 400 SchemaParseError，导致终端接口全面瘫痪。
+#
+# 【保障机制】
+# 与 Rust 原生编译的 opencode-pty 守护进程（基于 native-pty-daemon.patch）形成严格的协议闭环，提供
+# 真正的工具生命周期保留能力和零异常的终端操作。
+# ==============================================================================
 diff --git a/packages/core/src/persistent-pty/daemon.ts b/packages/core/src/persistent-pty/daemon.ts
 index 21bcaab..5fe07a2 100644
 --- a/packages/core/src/persistent-pty/daemon.ts

@@ -52,7 +52,18 @@ const jsoncPackage = path.join(assets, "node_modules/jsonc-parser/package.json")
 const jsoncManifest = JSON.parse(await fs.readFile(jsoncPackage, "utf8"))
 jsoncManifest.main = "./lib/esm/main.js"
 await fs.writeFile(jsoncPackage, JSON.stringify(jsoncManifest, null, 2) + "\n")
-await copy(path.join(repository, "vendor"), path.join(assets, "vendor"))
+if (process.env.QOL_VENDOR_CONFIG) {
+  const vendorConfig = JSON.parse(await fs.readFile(process.env.QOL_VENDOR_CONFIG, "utf8"))
+  await fs.mkdir(path.join(assets, "vendor"), { recursive: true })
+  await copy(vendorConfig.omo, path.join(assets, "vendor/oh-my-opencode-slim"))
+  await copy(vendorConfig.billion, path.join(assets, "vendor/billion-context"))
+  execFileSync("patch", ["-p1", "-i", path.join(repository, "patches/omo-qol-enhancements.patch")], {
+    cwd: path.join(assets, "vendor/oh-my-opencode-slim"),
+    stdio: "inherit",
+  })
+} else {
+  await copy(path.join(repository, "vendor"), path.join(assets, "vendor"))
+}
 for (const name of ["image", "session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp"]) {
   await copy(path.join(repository, "plugins", name), path.join(assets, "plugins", name))
 }

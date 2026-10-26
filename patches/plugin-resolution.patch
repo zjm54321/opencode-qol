@@ -1,3 +1,21 @@
+# ==============================================================================
+# Patch: plugin-resolution.patch
+# 模块: packages/plugin/src/host.ts
+#
+# 【改动内容】
+# 将插件入口解析模块 resolveModule 中的异常类型判定从原生的 `error instanceof Error`
+# 重构为更宽容、防御性的类型判断逻辑（typeof !== "object" || error === null || !("code" in error)）。
+#
+# 【存在理由】
+# 1. 在 Bun 及 Node.js 多 Worker / Realm 或打包后孤立上下文中，捕获到的模块解析异常可能来自跨 Realm
+#    环境，其 `instanceof Error` 原型链检查可能意外失败。
+# 2. 原生代码中若原型链检查不匹配，会直接把 ENOENT/MODULE_NOT_FOUND 抛出为未捕获异常，导致插件加载管道
+#    直接中断崩溃。
+#
+# 【保障机制】
+# 通过对象属性与错误码（MODULE_NOT_FOUND, ENOENT 等）的存在性检测，确保所有符合规范的模块缺失异常
+# 均能被正确识别并走入合法的忽略/回退分支，保证 QoL 插件加载体系的绝对鲁棒性。
+# ==============================================================================
 diff --git a/packages/plugin/src/host.ts b/packages/plugin/src/host.ts
 --- a/packages/plugin/src/host.ts
 +++ b/packages/plugin/src/host.ts

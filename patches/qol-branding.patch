@@ -1,3 +1,23 @@
+# ==============================================================================
+# Patch: qol-branding.patch
+# 模块: packages/cli/src/index.ts, packages/tui/src/component/dialog-debug.tsx,
+#       packages/tui/src/feature-plugins/home/footer.tsx, packages/tui/src/logo.ts,
+#       packages/tui/src/mini/splash.ts
+#
+# 【改动内容】
+# 1. 版本号展示呈现：在 CLI 的 --version 及 TUI 调试对话框中，将面向用户的版本文本格式化为包含
+#    -qol 后缀的形式（如 v2.1.4-qol），而内部核心代码依然维持无污染的原版版本号。
+# 2. 终端原生 Logo 设计：在 TUI 首页与启动闪屏中，引入两行高度的迷你方块点阵字（qol），并以
+#    绝对基准对齐方式布局于 opencode 官方艺术字右下方，使主标题严格居中且极具工业感。
+#
+# 【存在理由】
+# 1. 明确向使用者指示当前环境为纯净构建的 QoL 整合包状态。
+# 2. 原版无品牌徽标扩展点，直接追加文本会导致终端整屏居中破坏，本补丁通过微型 ASCII 点阵与布局
+#    约束达成美观居中效果。
+#
+# 【保障机制】
+# 纯展示层改造，绝不篡改系统状态目录判定、协议兼容性判定或数据库迁移版本号。
+# ==============================================================================
 diff --git a/packages/cli/src/index.ts b/packages/cli/src/index.ts
 index a81de93..866fee9 100644
 --- a/packages/cli/src/index.ts

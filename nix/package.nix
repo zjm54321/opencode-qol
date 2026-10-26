@@ -5,6 +5,7 @@
   pluginNodeModules,
   nativePty,
   skillInputs ? { },
+  vendorInputs ? { },
   mcpNixpkgs ? null,
   modelPolicies ? { },
   ...
@@ -18,6 +19,10 @@ let
   skillsConfig = pkgs.writeText "qol-skills-inputs.json" (builtins.toJSON {
     documenterArtifact = "${documenterArtifact}";
     sources = skillInputs;
+  });
+  vendorConfig = pkgs.writeText "qol-vendor-inputs.json" (builtins.toJSON {
+    omo = "${vendorInputs.oh-my-opencode-slim-src}";
+    billion = "${vendorInputs.billion-context-src}";
   });
   patchedSource = pkgs.applyPatches {
     name = "opencode-qol-upstream-source";
@@ -85,6 +90,7 @@ upstream.overrideAttrs (old: {
     export QOL_AST_GREP=${lib.getExe mcpServers.astGrep}
     export QOL_BASH="${pkgs.bashInteractive}/bin/bash"
     export QOL_SKILLS_CONFIG="${skillsConfig}"
+    export QOL_VENDOR_CONFIG="${vendorConfig}"
     # Builds the checked-in OMO/Billion sources using integrity-locked library
     # inputs before the upstream CLI's static Bun compilation. No npm install.
     node ${./prepare-source.mjs}

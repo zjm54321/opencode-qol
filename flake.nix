@@ -118,6 +118,9 @@
       };
       package = import ./nix/package.nix {
         inherit pkgs opencode pluginNodeModules skillInputs;
+        vendorInputs = {
+          inherit (inputs) oh-my-opencode-slim-src billion-context-src;
+        };
         mcpNixpkgs = inputs.mcp-nixpkgs;
         nativePty = pkgs.callPackage ./nix/pty-daemon.nix { inherit pty-src ghostty-src; };
         inherit (pkgs) lib;

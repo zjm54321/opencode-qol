@@ -1,3 +1,23 @@
+# ==============================================================================
+# Patch: tui-qol-tools.patch
+# 模块: packages/tui/src/feature-plugins/system/plugins.tsx, packages/tui/src/mini/tool.ts,
+#       packages/tui/src/routes/session/index.tsx, packages/tui/src/routes/session/message-parts.tsx,
+#       packages/tui/src/util/qol-tool-display.ts
+#
+# 【改动内容】
+# 1. 插件透明度展示：在 TUI 的 /plugins 对话框中，解除对 QoL 专属插件（以 opencode.qol.* 为前缀，
+#    以及 oh-my-opencode-slim 与 billion-context）的强制隐藏逻辑，使其在插件列表中正常可见。
+# 2. 工具卡片与调用渲染增强：为 QoL 独有的终端持久化工具（pty_spawn, pty_read 等）和会话工具注入优化的
+#    标题渲染、状态图标及输出视图支持。
+#
+# 【存在理由】
+# 1. OpenCode 原生 TUI 默认将所有“内置（builtin）”属性的插件视作底层机制全部遮蔽，导致整合包使用者
+#    无法通过 /plugins 查看自带增强插件的工作状态。
+# 2. 原版终端输出在信息块中呈现单调，缺少对带有生命周期属性的守护进程命令的优雅视觉表达。
+#
+# 【保障机制】
+# 仅针对明确定义的 QoL 插件命名空间进行非侵入式放行与增强，保持原生通用组件行为不发生漂移。
+# ==============================================================================
 diff --git a/packages/tui/src/feature-plugins/system/plugins.tsx b/packages/tui/src/feature-plugins/system/plugins.tsx
 --- a/packages/tui/src/feature-plugins/system/plugins.tsx
 +++ b/packages/tui/src/feature-plugins/system/plugins.tsx

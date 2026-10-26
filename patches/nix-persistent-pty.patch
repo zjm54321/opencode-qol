@@ -1,3 +1,20 @@
+# ==============================================================================
+# Patch: nix-persistent-pty.patch
+# 模块: nix/opencode.nix
+#
+# 【改动内容】
+# 1. 编译工具链扩展：在上游 Nix 派生包构建依赖中引入 patchelf。
+# 2. 嵌入前原生二进制修复：在 upstream 的 CLI 构建脚本计算 SHA256 哈希并将其嵌入最终二进制之前，
+#    通过 Bun 动态解析出平台专属的 opencode-pty 二进制路径，并使用 patchelf 设置正确的 NixOS
+#    动态链接器（dynamicLinker）以及 rpath（指向 glibc 与 gcc.lib）。
+#
+# 【存在理由】
+# NixOS 不属于标准 FHS 目录结构，没有任何 /lib64/ld-linux-x86-64.so.2。原版构建若直接打包常规
+# GNU 二进制，在 NixOS 上启动子进程终端时会直接因“解释器未找到”而导致终端派生完全失败。
+#
+# 【保障机制】
+# 确保 CLI 在构建期打包固化的内嵌 PTY 守护进程天然具备针对 NixOS 环境的确定性动态链接属性。
+# ==============================================================================
 diff --git a/nix/opencode.nix b/nix/opencode.nix
 --- a/nix/opencode.nix
 +++ b/nix/opencode.nix

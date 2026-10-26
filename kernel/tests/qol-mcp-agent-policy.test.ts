@@ -155,15 +155,14 @@ describe("bundled MCP → real Slim V2 agent policy (host-domain harness, not ca
     expect([...h.mcps.keys()].sort()).toEqual(["codegraph", "context7", "gh_grep", "nixos"]);
     for (const action of Object.values(actions)) expect(h.policy("explorer").decide(action, "*")).toBe("allow");
     for (const agent of ["oracle", "designer", "fixer"]) expect(h.agents.has(agent)).toBe(true);
-    // Council members are generated only when configured. Check every actually
-    // registered non-explorer specialist, including any generated members.
-    for (const agent of h.agents.keys()) {
-      if (["orchestrator", "explorer", "explore", "librarian"].includes(agent)) continue;
-      expect(h.policy(agent).decide(actions.codegraph, "*")).toBe("deny");
-      expect(h.policy(agent).decide(actions.nixos, "*")).toBe("deny");
+    for (const agent of ["oracle", "designer", "fixer"]) {
+      expect(h.policy(agent).decide(actions.codegraph, "*")).toBe("allow");
+      expect(h.policy(agent).decide(actions.nixos, "*")).toBe(agent === "fixer" ? "allow" : "deny");
+      for (const action of [actions.context7, actions.gh_grep]) expect(h.policy(agent).decide(action, "*")).toBe("deny");
     }
     expect(h.policy("orchestrator").decide(actions.context7, "*")).toBe("deny");
-    for (const action of [actions.gh_grep, actions.codegraph, actions.nixos]) expect(h.policy("orchestrator").decide(action, "*")).toBe("allow");
+    expect(h.policy("orchestrator").decide(actions.gh_grep, "*")).toBe("deny");
+    for (const action of [actions.codegraph, actions.nixos]) expect(h.policy("orchestrator").decide(action, "*")).toBe("allow");
   });
 
   test("an explicit user explorer mcps list replaces the baked allowlist", async () => {

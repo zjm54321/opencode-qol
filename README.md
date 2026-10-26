@@ -4,6 +4,52 @@ OpenCode Quality of Life (QoL) 是一款面向生产环境的 OpenCode 完整工
 
 ---
 
+## 🚀 官方一键安装
+
+### Windows · PowerShell 5.1 / 7+
+
+```powershell
+irm https://raw.githubusercontent.com/zjm54321/opencode-qol/main/scripts/install.ps1 | iex
+```
+
+默认安装到 `$HOME\.opencode\bin`，自动登记用户 PATH，并运行 `opencode.exe --version`。**当前 CI 仅发布 Linux x64 包，Windows 下载需要 Release 另行提供 `opencode-windows-x64.zip`；当前可使用本地 ZIP 离线安装。**
+
+### Linux / macOS · Bash
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/zjm54321/opencode-qol/main/scripts/install.sh | bash
+```
+
+默认安装到 `~/.opencode/bin`。**当前提供 Linux x64 的完整 Nix 闭包归档，需要先安装 Nix；macOS/ARM 原生归档尚未发布。** 若该目录不在 PATH 中，脚本会输出添加命令。安装后的 `opencode` 使用标准全局持久化配置与数据目录。
+
+> 只想试用？在本仓库执行 `nix run`。它在随机 `/tmp/opencode-run-XXXXXX` 工作目录启动，隔离 HOME 和所有 XDG 配置、数据、状态、缓存、运行时目录，退出即清理；不会复用全局认证或历史记录。此处是目录级试用隔离，不是限制网络与文件访问的安全容器。
+
+## Monorepo 布局与发布安装
+
+- `kernel/`：默认配置、插件、源码补丁、测试、依赖锁以及 Nix 构建逻辑。
+- 根目录保留 `flake.nix`、`flake.lock`，统一导出 `.#default`、`.#kernel` 和 `.#opencode`；构建入口为 `kernel/nix/package.nix`。
+- 安装和运行脚本统一放在 `scripts/`：`scripts/install.sh`、`scripts/install.ps1`、`scripts/run-isolated.sh`；发布工作流为 `.github/workflows/release.yml`。
+- 私有 `isolated/` 配置保留在根目录，由 `.gitignore` 忽略，不纳入 Git 跟踪。
+
+```sh
+nix build
+bun test
+bash scripts/install.sh --version v2.1.4-qol
+# 离线 Linux 安装：
+bash scripts/install.sh --archive ./opencode-linux-x64.tar.gz
+```
+
+Linux x64 发布归档包含完整 Nix 闭包，安装前需要 Nix；脚本导入闭包并创建 GC root。Windows/macOS 原生包尚不由当前工作流构建，Unix 脚本按系统与架构寻找对应资产。Windows 脚本兼容 PowerShell 5.1/7，支持用户提供的 ZIP：
+
+```powershell
+.\scripts\install.ps1 -ZipPath .\opencode-windows-x64.zip -NoPath
+# -Archive 同样支持本地 ZIP；省略两者则从对应 Release 下载。
+```
+
+推送 `v*` 标签自动发布 Linux 包、安装脚本和 `SHA256SUMS.txt`；手动触发需要填写已有标签。
+
+`bun test` 只发现 `kernel/tests/`，不会进入 `result` 的第三方测试树；插件源码测试需要已准备好的上游工作区依赖与构建期 vendor 源码。
+
 ## 🌟 整合包重大特性更新 (Major QoL Update)
 
 本版本对系统进行了全面的原生闭包重构与技能体系扩充，带来以下重大升级：
@@ -45,10 +91,11 @@ OpenCode Quality of Life (QoL) 是一款面向生产环境的 OpenCode 完整工
 - 通过 Nix 固化拉取官方已验证的 `alvin/documenter` v3 规范 artifact，在构建期生成符合 OMO 原生 Marketplace 存储规范的结构（`package.json`、`sha256` 侧车及 `lock.json`）。
 - 启动时原生注入，无需网络即可通过 `/marketplace` 检查或按需更新。
 
-### 3. 双预设支持 (Dual Presets)
+### 3. 模型预设支持
 内置预设包含单模型与多梯队容灾链路：
 - **`default`**：各 Agent 绑定权威首选模型（Orchestrator: Claude Opus 5.5 High, Oracle: GPT-6 Astra Max, Explorer: GPT-6 Luna XHigh, Designer: Claude Opus 5.5 High, Fixer: GPT-6.1 Sol XHigh, Council: GPT-6.1 Sol Max, Documenter: Gemini 3.8 Flash High）。
 - **`defaultwithfallback`**：多层级故障转移链路，按优先级自动平滑回退，跨 Anthropic、Google、OpenAI 与 OpenRouter。
+- **`free`**：官方 `opencode` provider 免费模型，含七个角色、三方 Council 与 `alvin/documenter`。官方 provider 默认启用，本地隔离配置仍禁用它。
 
 ### 4. 严苛权限与职责隔离矩阵 (Role & MCP Isolation)
 - **Specialist 独占性**：
@@ -105,8 +152,8 @@ programs.opencode-qol = {
 
 ## 架构与范围说明
 
-- **Monorepo 内置闭包**：自有内置插件（`clear-encrypted`, `session-reader`, `opencode-image`, `opencode-desktop-bridge`）在 `plugins/` 本地维护并归属 QoL 项目；`oh-my-opencode-slim@3.0.6` 与 `billion-context@0.1.206` 源码收录于 `vendor/`，构建期统一锁定，无运行时 npm 安装。
-- **官方 PTY 归一**：`src/native-pty.ts` 复用 `PersistentPty.Service` 与原生终端面板；`pty_read` 读取守护进程保留的最近 2 MiB 输出，支持分页和正则检索，不另建日志存储。工具终端退出后保留输出，清理或守护进程结束后释放；退出通知使用原生 synthetic 消息。
+- **Monorepo 内置闭包**：自有内置插件（`clear-encrypted`, `session-reader`, `opencode-image`, `opencode-desktop-bridge`）在 `kernel/plugins/` 本地维护并归属 QoL 项目；`oh-my-opencode-slim@3.0.6` 与 `billion-context@0.1.206` 构建期统一锁定并收录到产物的 `vendor/`，无运行时 npm 安装。
+- **官方 PTY 归一**：`kernel/src/native-pty.ts` 复用 `PersistentPty.Service` 与原生终端面板；`pty_read` 读取守护进程保留的最近 2 MiB 输出，支持分页和正则检索，不另建日志存储。工具终端退出后保留输出，清理或守护进程结束后释放；退出通知使用原生 synthetic 消息。
 - **桌面桥接边界**：仅提供 `opencode-desktop-bridge` 插件包并采用新 RPC 标识，不保留旧名称兼容，不包含 Windows 原生前端程序。
 - **随包 MCP**：Codegraph `1.6.2` 与 NixOS MCP `3.0.1` 的 stdio 服务程序随 Nix 闭包提供，内置插件自动注册；显式同名配置优先。Codegraph 索引由使用者创建，启动不自动索引项目。Context7 与 GitHub grep 沿用 Slim 的远程 MCP 定义。
 - **QoL 标识**：首页显示小号 `qol`；版本展示动态追加 `-qol`，不改变上游版本、更新通道或状态目录。Sunburst 生成字标位于 `assets/branding/`，随包安装到 `share/opencode-qol/branding/`。

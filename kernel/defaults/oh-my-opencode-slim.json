@@ -2,6 +2,64 @@
   "$schema": "https://unpkg.com/oh-my-opencode-slim@3.0.6/oh-my-opencode-slim.schema.json",
   "autoUpdate": false,
   "presets": {
+    "free": {
+      "orchestrator": {
+        "model": "opencode/glm-5.3-flash-free",
+        "variant": "max",
+        "skills": [
+          "*",
+          "!customer-research",
+          "!context7-mcp",
+          "!ui-ux-pro-max",
+          "!make-interfaces-feel-better",
+          "!better-icons",
+          "!image-generation",
+          "!python-code-style",
+          "!typescript-advanced-types",
+          "!rust-best-practices",
+          "!modern-python",
+          "!skill-creator",
+          "!web-perf",
+          "!code-review-excellence",
+          "!architecture",
+          "!simplify",
+          "!humanizer-zh",
+          "!humanizer",
+          "!writing-clearly-and-concisely"
+        ],
+        "mcps": ["codegraph", "nixos"]
+      },
+      "fixer": {
+        "model": "opencode/deepseek-v4.1-flash-free",
+        "variant": "max",
+        "skills": ["python-code-style", "typescript-advanced-types", "rust-best-practices", "modern-python", "skill-creator"],
+        "mcps": ["codegraph", "nixos"]
+      },
+      "oracle": {
+        "model": "opencode/nemotron-3-ultra-free",
+        "skills": ["web-perf", "code-review-excellence", "architecture", "simplify"],
+        "mcps": ["codegraph"]
+      },
+      "explorer": {
+        "model": "opencode/nemotron-3.5-lightning-free",
+        "skills": ["customer-research", "context7-mcp"],
+        "mcps": ["codegraph", "context7", "gh_grep", "nixos"]
+      },
+      "designer": {
+        "model": "opencode/mimo-v2.6-flash-free",
+        "skills": ["ui-ux-pro-max", "make-interfaces-feel-better", "better-icons", "image-generation"],
+        "mcps": ["codegraph"]
+      },
+      "documenter": {
+        "model": "opencode/mimo-v2.6-flash-free",
+        "skills": ["humanizer-zh", "humanizer", "writing-clearly-and-concisely"],
+        "mcps": ["codegraph"]
+      },
+      "council": {
+        "model": "opencode/deepseek-v4.1-flash-free",
+        "mcps": ["codegraph"]
+      }
+    },
     "default": {
       "orchestrator": {
         "model": "anthropic/claude-opus-5-5",
@@ -338,6 +396,9 @@
     }
   },
   "marketplacePresets": {
+    "free": {
+      "agents": ["alvin/documenter"]
+    },
     "default": {
       "agents": [
         "alvin/documenter"
@@ -356,6 +417,11 @@
   },
   "council": {
     "presets": {
+      "free": {
+        "alpha": { "model": "opencode/nemotron-3-ultra-free" },
+        "beta": { "model": "opencode/nemotron-3.5-lightning-free" },
+        "gamma": { "model": "opencode/glm-5.3-flash-free" }
+      },
       "default": {
         "alpha": {
           "model": "openai/gpt-6-astra",

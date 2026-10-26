@@ -2,9 +2,6 @@
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "orchestrator",
   "session": { "sidebar": "show" },
-  "policies": [
-    { "action": "provider.use", "resource": "opencode", "effect": "deny" }
-  ],
   "agents": {
     "plan": { "disabled": true },
     "build": { "disabled": true },
@@ -12,9 +9,6 @@
     "explore": { "disabled": true }
   },
   "update": "disable",
-  "disabled_providers": [
-    "opencode"
-  ],
   "permission": {
     "external_directory": {
       "*": "ask",

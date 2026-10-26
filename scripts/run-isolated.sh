@@ -2,11 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR="$SCRIPT_DIR/isolated/config"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_DIR="$REPO_DIR/isolated/config"
 DATA_DIR="/tmp/opencode-isolated/data"
 STATE_DIR="/tmp/opencode-isolated/state"
 CACHE_DIR="/tmp/opencode-isolated/cache"
-OPENCODE_BIN="$(nix build "$SCRIPT_DIR#default" --no-link --print-out-paths)/bin/opencode"
+OPENCODE_BIN="$(nix build "$REPO_DIR#kernel" --no-link --print-out-paths)/bin/opencode"
 
 mkdir -p "$DATA_DIR" "$STATE_DIR" "$CACHE_DIR"
 

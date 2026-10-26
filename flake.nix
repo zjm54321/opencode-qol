@@ -91,7 +91,7 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
       pluginNodeModules = pkgs.importNpmLock.buildNodeModules {
-        npmRoot = ./.;
+        npmRoot = ./kernel;
         nodejs = pkgs.nodejs;
         derivationArgs = {
           npmFlags = [ "--ignore-scripts" ];
@@ -116,25 +116,33 @@
           humanizer
           the-elements-of-style;
       };
-      package = import ./nix/package.nix {
+      package = import ./kernel/nix/package.nix {
         inherit pkgs opencode pluginNodeModules skillInputs;
         vendorInputs = {
           inherit (inputs) oh-my-opencode-slim-src billion-context-src;
         };
         mcpNixpkgs = inputs.mcp-nixpkgs;
-        nativePty = pkgs.callPackage ./nix/pty-daemon.nix { inherit pty-src ghostty-src; };
+        nativePty = pkgs.callPackage ./kernel/nix/pty-daemon.nix { inherit pty-src ghostty-src; };
         inherit (pkgs) lib;
+      };
+      trial = pkgs.writeShellApplication {
+        name = "opencode-trial";
+        runtimeInputs = [ pkgs.coreutils ];
+        runtimeEnv.OPENCODE_TRIAL_BINARY = "${package}/bin/opencode";
+        text = builtins.readFile ./kernel/nix/trial.sh;
       };
     in
     {
       packages.${system} = {
         default = package;
-        pty-daemon = pkgs.callPackage ./nix/pty-daemon.nix { inherit pty-src ghostty-src; };
+        kernel = package;
+        opencode = package;
+        pty-daemon = pkgs.callPackage ./kernel/nix/pty-daemon.nix { inherit pty-src ghostty-src; };
       };
       apps.${system}.default = {
         type = "app";
-        program = "${package}/bin/opencode";
+        program = "${trial}/bin/opencode-trial";
       };
-      homeManagerModules.default = import ./modules/home-manager.nix { inherit self; };
+      homeManagerModules.default = import ./kernel/modules/home-manager.nix { inherit self; };
     };
 }

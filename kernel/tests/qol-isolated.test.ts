@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 
-const script = await Bun.file(new URL("../run-isolated.sh", import.meta.url)).text()
+const script = await Bun.file(new URL("../../scripts/run-isolated.sh", import.meta.url)).text()
 const seed = script.match(/# Seed history once[\s\S]*?\nfi/)?.[0]
 if (!seed) throw new Error("Missing isolated history initialization")
 let directory: string

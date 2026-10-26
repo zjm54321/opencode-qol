@@ -1,10 +1,9 @@
-// Focused checks for patches/qol-branding.patch and assets/branding.
-// The patched packages/tui/src/logo.ts is reconstructed from its full-file hunk,
+// Focused checks for patches/qol-branding.patch.
+// The patched packages/util/src/qol-version.ts is reconstructed from its full-file hunk,
 // so the version helpers run without the upstream tree.
 // Set OPENCODE_QOL_UPSTREAM=<official source> to also dry-run the patch against it.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,15 +11,13 @@ import path from "node:path";
 const ROOT = path.join(import.meta.dir, "..");
 const PATCH = path.join(ROOT, "patches/qol-branding.patch");
 
-type LogoModule = {
-  logo: { left: string[]; right: string[] };
-  go: { left: string[]; right: string[] };
+type VersionModule = {
   qolVersion: (version: string) => string;
   qolVersionLabel: (version: string) => string;
 };
 
 let patch: string;
-let mod: LogoModule;
+let mod: VersionModule;
 let directory: string;
 
 function sections(text: string) {
@@ -39,18 +36,16 @@ const added = (file: string) =>
 
 beforeAll(async () => {
   patch = await readFile(PATCH, "utf8");
-  const body = sections(patch).get("packages/tui/src/logo.ts")!;
+  const body = sections(patch).get("packages/util/src/qol-version.ts")!;
   const hunk = body.findIndex((l) => l.startsWith("@@"));
-  // Full-file hunk: starts at line 1 and keeps all 9 upstream lines as context.
-  expect(body[hunk]).toMatch(/^@@ -1,9 \+1,\d+ @@/);
   const file = body
     .slice(hunk + 1)
     .filter((l) => !l.startsWith("-") && !l.startsWith("\\"))
     .map((l) => l.slice(1))
     .join("\n");
   directory = await mkdtemp(path.join(process.env.TMPDIR ?? tmpdir(), "qol-branding-"));
-  await writeFile(path.join(directory, "logo.ts"), file);
-  mod = await import(path.join(directory, "logo.ts"));
+  await writeFile(path.join(directory, "qol-version.ts"), file);
+  mod = await import(path.join(directory, "qol-version.ts"));
 });
 
 afterAll(async () => {
@@ -94,10 +89,8 @@ describe("display version", () => {
 });
 
 describe("official logo", () => {
-  test("leaves the wordmark, component and home route unchanged", () => {
-    const body = sections(patch).get("packages/tui/src/logo.ts")!.join("\n");
-    expect(body).not.toMatch(/^-(?!-- a\/)/m);
-    expect(Object.keys(mod).sort()).toEqual(["go", "logo", "qolVersion", "qolVersionLabel"].sort());
+  test("leaves logo.ts completely untouched and official logo unchanged", () => {
+    expect(sections(patch).has("packages/tui/src/logo.ts")).toBe(false);
     expect(sections(patch).has("packages/tui/src/component/logo.tsx")).toBe(false);
     expect(sections(patch).has("packages/tui/src/routes/home.tsx")).toBe(false);
     expect(sections(patch).has("packages/tui/src/feature-plugins/system/stats.tsx")).toBe(false);
@@ -111,8 +104,8 @@ describe("patch scope", () => {
         "packages/cli/src/index.ts",
         "packages/tui/src/component/dialog-debug.tsx",
         "packages/tui/src/feature-plugins/home/footer.tsx",
-        "packages/tui/src/logo.ts",
         "packages/tui/src/mini/splash.ts",
+        "packages/util/src/qol-version.ts",
       ].sort(),
     );
     const tools = sections(await readFile(path.join(ROOT, "patches/tui-qol-tools.patch"), "utf8"));

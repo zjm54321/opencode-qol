@@ -1,32 +1,31 @@
 # ==============================================================================
 # Patch: qol-branding.patch
 # 模块: packages/cli/src/index.ts, packages/tui/src/component/dialog-debug.tsx,
-#       packages/tui/src/feature-plugins/home/footer.tsx, packages/tui/src/logo.ts,
-#       packages/tui/src/mini/splash.ts
+#       packages/tui/src/feature-plugins/home/footer.tsx, packages/tui/src/mini/splash.ts,
+#       packages/util/src/qol-version.ts
 #
 # 【改动内容】
-# 1. 版本号展示呈现：在 CLI 的 --version 及 TUI 调试对话框中，将面向用户的版本文本格式化为包含
-#    -qol 后缀的形式（如 v2.1.4-qol），而内部核心代码依然维持无污染的原版版本号。
-# 2. 终端原生 Logo 设计：在 TUI 首页与启动闪屏中，引入两行高度的迷你方块点阵字（qol），并以
-#    绝对基准对齐方式布局于 opencode 官方艺术字右下方，使主标题严格居中且极具工业感。
+# 1. 纯展示层版本标识：在 packages/util/src/qol-version.ts 中实现通用工具函数 qolVersion 与 qolVersionLabel。
+# 2. 在 CLI --version、TUI 底部 Footer、启动闪屏 Splash 及 Debug 对话框中，仅对展示文本追加 -qol
+#    后缀（如 v2.1.4-qol），使使用者清晰感知 QoL 增强状态。
+# 3. 严格保持底层核心变量 OPENCODE_VERSION（2.1.4）为原版数字，不破坏数据库迁移与服务通信。
+# 4. 彻底剥离任何 Logo 篡改，终端首页与全系统的 ASCII Logo 100% 保持官方原生字符艺术排版。
 #
 # 【存在理由】
-# 1. 明确向使用者指示当前环境为纯净构建的 QoL 整合包状态。
-# 2. 原版无品牌徽标扩展点，直接追加文本会导致终端整屏居中破坏，本补丁通过微型 ASCII 点阵与布局
-#    约束达成美观居中效果。
+# 明确向用户展示 QoL 编译版本标签，同时消除一切对官方 Logo 和字符艺术的不必要修改。
 #
 # 【保障机制】
-# 纯展示层改造，绝不篡改系统状态目录判定、协议兼容性判定或数据库迁移版本号。
+# 纯展示层改造，不篡改系统状态目录判定、协议兼容性判定或数据库迁移版本号，零侵入原生 Logo。
 # ==============================================================================
 diff --git a/packages/cli/src/index.ts b/packages/cli/src/index.ts
-index a81de93..866fee9 100644
+index a81de93..32636ab 100644
 --- a/packages/cli/src/index.ts
 +++ b/packages/cli/src/index.ts
 @@ -10,6 +10,7 @@ import { Observability } from "@opencode/util/observability"
  import { Updater } from "./services/updater"
  import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_LOCAL, OPENCODE_VERSION } from "./version"
  import { LayerNode } from "@opencode/util/effect/layer-node"
-+import { qolVersion } from "@opencode/tui/logo"
++import { qolVersion } from "@opencode/util/qol-version"
  import { Global } from "@opencode/util/global"
  import { AppProcess } from "@opencode/util/process"
  import { Config } from "./config"
@@ -41,14 +40,14 @@ index a81de93..866fee9 100644
    Effect.catchCause((cause) =>
      Effect.logError("cli process failed", {
 diff --git a/packages/tui/src/component/dialog-debug.tsx b/packages/tui/src/component/dialog-debug.tsx
-index 546f47c..765555e 100644
+index 546f47c..550429e 100644
 --- a/packages/tui/src/component/dialog-debug.tsx
 +++ b/packages/tui/src/component/dialog-debug.tsx
 @@ -9,6 +9,7 @@ import { useToast } from "../ui/toast"
  import { describeOS, describeTerminal } from "../util/system"
  import { useTuiApp } from "../context/runtime"
  import { useNewDesigns } from "../config"
-+import { qolVersion } from "../logo"
++import { qolVersion } from "@opencode/util/qol-version"
  
  export function DialogDebug() {
    const theme = useTheme()
@@ -62,14 +61,14 @@ index 546f47c..765555e 100644
        { label: "OS", value: describeOS() },
        { label: "Terminal", value: describeTerminal() },
 diff --git a/packages/tui/src/feature-plugins/home/footer.tsx b/packages/tui/src/feature-plugins/home/footer.tsx
-index d31888c..0d6dcbd 100644
+index d31888c..127feb9 100644
 --- a/packages/tui/src/feature-plugins/home/footer.tsx
 +++ b/packages/tui/src/feature-plugins/home/footer.tsx
 @@ -3,6 +3,7 @@ import { createMemo, Match, Show, Switch } from "solid-js"
  import { useTerminalDimensions } from "@opentui/solid"
  import { usePlugin } from "../../plugin/context"
  import { Slot } from "../../plugin/render"
-+import { qolVersionLabel } from "../../logo"
++import { qolVersionLabel } from "@opencode/util/qol-version"
  
  export function homeFooterVisibility(width: number) {
    return {
@@ -82,20 +81,33 @@ index d31888c..0d6dcbd 100644
            </box>
          </Show>
        </box>
-diff --git a/packages/tui/src/logo.ts b/packages/tui/src/logo.ts
---- a/packages/tui/src/logo.ts
-+++ b/packages/tui/src/logo.ts
-@@ -1,9 +1,22 @@
- export const logo = {
-   left: ["                   ", "█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█__█ █__█ █^^^ █__█", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"],
-   right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
- }
-
- export const go = {
-   left: ["    ", "█▀▀▀", "█_^█", "▀▀▀▀"],
-   right: ["    ", "█▀▀█", "█__█", "▀▀▀▀"],
- }
-+
+diff --git a/packages/tui/src/mini/splash.ts b/packages/tui/src/mini/splash.ts
+index 123b224..dcf9356 100644
+--- a/packages/tui/src/mini/splash.ts
++++ b/packages/tui/src/mini/splash.ts
+@@ -16,6 +16,7 @@ import {
+ import { Locale } from "../util/locale"
+ import { stringWidth } from "../util/string-width"
+ import { go } from "../logo"
++import { qolVersion } from "@opencode/util/qol-version"
+ import { monoTruncate } from "./mono"
+ import type { RunSplashTheme } from "./theme"
+ 
+@@ -289,7 +290,7 @@ export function entrySplashLayout(input: { width: number; version: string; detai
+   const stages = [
+     { label: `${input.mono ? "[O]" : "▪"} oc mini` },
+     ...(leaf ? [{ path: leaf }] : []),
+-    ...(input.version ? [{ version: input.version }] : []),
++    ...(input.version ? [{ version: qolVersion(input.version) }] : []),
+     ...paths.concat(detail ? [detail] : []).map((path) => ({ path })),
+   ]
+   // Stop at the first non-fitting stage instead of backfilling lower-priority metadata.
+diff --git a/packages/util/src/qol-version.ts b/packages/util/src/qol-version.ts
+new file mode 100644
+index 0000000..8f3b601
+--- /dev/null
++++ b/packages/util/src/qol-version.ts
+@@ -0,0 +1,12 @@
 +const suffix = "-qol"
 +
 +export function qolVersion(version: string) {
@@ -108,25 +120,3 @@ diff --git a/packages/tui/src/logo.ts b/packages/tui/src/logo.ts
 +  const value = qolVersion(version)
 +  return /^\d/.test(value) ? `v${value}` : value
 +}
-diff --git a/packages/tui/src/mini/splash.ts b/packages/tui/src/mini/splash.ts
-index 123b224..23a884c 100644
---- a/packages/tui/src/mini/splash.ts
-+++ b/packages/tui/src/mini/splash.ts
-@@ -15,7 +15,7 @@ import {
- } from "@opentui/core"
- import { Locale } from "../util/locale"
- import { stringWidth } from "../util/string-width"
--import { go } from "../logo"
-+import { go, qolVersion } from "../logo"
- import { monoTruncate } from "./mono"
- import type { RunSplashTheme } from "./theme"
- 
-@@ -289,7 +289,7 @@ export function entrySplashLayout(input: { width: number; version: string; detai
-   const stages = [
-     { label: `${input.mono ? "[O]" : "▪"} oc mini` },
-     ...(leaf ? [{ path: leaf }] : []),
--    ...(input.version ? [{ version: input.version }] : []),
-+    ...(input.version ? [{ version: qolVersion(input.version) }] : []),
-     ...paths.concat(detail ? [detail] : []).map((path) => ({ path })),
-   ]
-   // Stop at the first non-fitting stage instead of backfilling lower-priority metadata.

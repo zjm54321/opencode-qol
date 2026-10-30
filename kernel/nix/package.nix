@@ -55,7 +55,7 @@ upstream.overrideAttrs (old: {
   pname = "opencode-qol";
   __intentionallyOverridingVersion = true;
   version = (builtins.fromJSON (builtins.readFile "${opencode.outPath}/packages/cli/package.json")).version;
-  patches = (old.patches or [ ]) ++ [ ../patches/plugin-resolution.patch ../patches/native-pty-compat.patch ../patches/tui-qol-tools.patch ../patches/qol-branding.patch ];
+  patches = (old.patches or [ ]) ++ [ ../patches/plugin-resolution.patch ../patches/native-pty-compat.patch ../patches/tui-qol-tools.patch ../patches/qol-branding.patch ../patches/browser-session-family.patch ];
   doCheck = false;
   doInstallCheck = false;
 

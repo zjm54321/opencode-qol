@@ -1,0 +1,364 @@
+# browser-session-family: reuse the nearest attached authoritative ancestor in the same location.
+# Upstream v2.1.4 / 68bc26b7da1990ce10ffecfbc1e09eb13aa5d824; QOL baseline 13bed93.
+# Keep browser protocol v4 and renderer/tunnel ownership unchanged.
+# Exact issued leases, location-scoped stale cleanup, and cross-instance permission write serialization.
+# Focused production-method fixture: kernel/tests/browser-session-family.test.ts
+diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
+--- a/packages/plugin-browser/src/connection.ts
++++ b/packages/plugin-browser/src/connection.ts
+@@ -3,67 +3,149 @@
+ import type { Context } from "@opencode/plugin/effect/plugin"
+ import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
+ import type { Session } from "@opencode/schema/session"
++import type { Permission } from "@opencode/schema/permission"
+ import { Tool } from "@opencode/schema/tool"
+-import { Deferred, Effect, Schema, Stream } from "effect"
++import { Deferred, Effect, Schema, Semaphore, Stream } from "effect"
++import { createHash } from "node:crypto"
+ import { Browser } from "./rpc.js"
+ import { BrowserTunnel } from "./tunnel.js"
+ 
+ type Attachment = {
+   connectionID: string
++  lease: string
++  live: boolean
+   state: Browser.State
+   closed: Deferred.Deferred<"closed" | "replaced">
+-  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error> }>
++  pending: Map<
++    string,
++    {
++      command: Browser.Command
++      result: Deferred.Deferred<Browser.Result, Tool.Error>
++      path: ReadonlyArray<{ id: Session.ID; epoch: number }>
++    }
++  >
+   tunnels: BrowserTunnel.Tunnels
+ }
+ 
++const leasePrefix = "opencode.browser/lease/"
++// Session permissions are replaced as a whole. Serialize browser writers across locations,
++// including an old location cleaning up a recipient that has already moved to a new one.
++const permissionLock = Semaphore.makeUnsafe(1)
++const liveLeases = new Set<string>()
++
+ export type Connection = Effect.Success<ReturnType<typeof make>>
+ 
+ export const make = Effect.fn("BrowserConnection.make")(function* (
+-  ctx: Pick<Context, "agent" | "rpc" | "session" | "location" | "event">,
++  ctx: Pick<Context, "agent" | "rpc" | "session" | "location" | "event" | "permission">,
+ ) {
+   const browsers = new Map<Session.ID, Attachment>()
++  const recipients = new Set<Session.ID>()
++  const suspended = new Set<Session.ID>()
++  const epochs = new Map<Session.ID, number>()
++  const issued = new Set<string>()
++  const prefix =
++    leasePrefix +
++    createHash("sha256")
++      .update(JSON.stringify([ctx.location.directory, ctx.location.workspaceID ?? null]))
++      .digest("hex") +
++    "/"
++  const owned = (rule: Permission.Rule) =>
++    rule.action === "browser" && rule.effect === "allow" && issued.has(rule.resource)
++  // Location-qualified resources also identify stale inherited copies after a restart.
++  // A different live connection's grant is never ours, even in the same location.
++  const stale = (rule: Permission.Rule) =>
++    rule.action === "browser" &&
++    rule.effect === "allow" &&
++    rule.resource.startsWith(prefix) &&
++    /^[a-f0-9-]{36}$/.test(rule.resource.slice(prefix.length)) &&
++    !liveLeases.has(rule.resource)
++  let active = true
++  const sameLocation = (session: Session.Info) =>
++    session.location.directory === ctx.location.directory && session.location.workspaceID === ctx.location.workspaceID
++  const resolve = Effect.fn("BrowserConnection.resolve")(function* (sessionID: Session.ID) {
++    const seen = new Set<Session.ID>()
++    const path: Array<{ id: Session.ID; epoch: number }> = []
++    let id: Session.ID | undefined = sessionID
++    for (let depth = 0; id && depth < 64 && active; depth++) {
++      if (seen.has(id) || suspended.has(id)) return
++      seen.add(id)
++      const epoch = epochs.get(id) ?? 0
++      const session: Session.Info | undefined = yield* ctx.session
++        .get({ sessionID: id })
++        .pipe(Effect.orElseSucceed(() => undefined))
++      if (!session || !sameLocation(session) || epoch !== (epochs.get(id) ?? 0)) return
++      path.push({ id, epoch })
++      const browser = browsers.get(id)
++      if (browser?.live) return { ownerID: id, browser, path }
++      // Only authoritative parentID participates; fork and metadata are not ancestry.
++      id = session.parentID
++    }
++  })
++  const reconcile = (sessionID: Session.ID) =>
++    permissionLock.withPermits(1)(
++      Effect.gen(function* () {
++        const session = yield* ctx.session.get({ sessionID }).pipe(Effect.orElseSucceed(() => undefined))
++        if (!session) {
++          recipients.delete(sessionID)
++          return
++        }
++        const local = sameLocation(session)
++        if (!local && !(session.permissions ?? []).some(owned)) {
++          recipients.delete(sessionID)
++          return
++        }
++        if (local) recipients.add(sessionID)
++        const route = local ? yield* resolve(sessionID) : undefined
++        // A moved recipient can only lose exact resources issued by this instance.
++        // Read its latest permissions under the shared lock, preserving new-location grants.
++        const rules = (session.permissions ?? []).filter((rule) => !owned(rule) && !(local && stale(rule)))
++        // Session restrictions remain last, so an explicit deny still wins over this lease.
++        const permissions: Permission.Ruleset = route
++          ? [{ action: "browser", resource: route.browser.lease, effect: "allow" }, ...rules]
++          : rules
++        if (JSON.stringify(permissions) !== JSON.stringify(session.permissions ?? []))
++          yield* ctx.session.update({ sessionID, permissions }).pipe(Effect.orDie)
++        if (!local) recipients.delete(sessionID)
++      }),
++    )
++  const reconcileAll = Effect.gen(function* () {
++    // Include children created before attachment and inherited copies not yet seen by this plugin.
++    let cursor: Session.ListCursor | undefined
++    do {
++      const page = yield* ctx.session.list({ directory: ctx.location.directory, cursor }).pipe(Effect.orDie)
++      for (const session of page.data) if (sameLocation(session)) recipients.add(session.id)
++      cursor = page.cursor.next
++    } while (cursor)
++    yield* Effect.forEach(Array.from(recipients), reconcile, { discard: true })
++  })
+   // Appended after config, so every agent hides the browser until an attachment allows it.
+   yield* ctx.agent.transform((editor) =>
+     editor.list().forEach((agent) => agent.permissions.push({ action: "browser", resource: "*", effect: "deny" })),
+   )
+-  // Each attachment adds and removes its own allow, so a replaced attachment keeps the new one's.
+-  const grant = (sessionID: Session.ID) =>
+-    Effect.acquireRelease(
+-      ctx.session.get({ sessionID }).pipe(
+-        Effect.flatMap((session) =>
+-          ctx.session.update({
+-            sessionID,
+-            permissions: [...(session.permissions ?? []), { action: "browser", resource: "*", effect: "allow" }],
+-          }),
+-        ),
+-        Effect.orDie,
+-      ),
+-      () =>
+-        ctx.session.get({ sessionID }).pipe(
+-          Effect.flatMap((session) => {
+-            const permissions = session.permissions ?? []
+-            const index = permissions.findIndex(
+-              (rule) => rule.action === "browser" && rule.resource === "*" && rule.effect === "allow",
+-            )
+-            if (index === -1) return Effect.void
+-            return ctx.session.update({ sessionID, permissions: permissions.toSpliced(index, 1) })
+-          }),
+-          Effect.ignore,
+-        ),
+-    )
+-  let active = true
+   const close = (sessionID: Session.ID, reason: "closed" | "replaced" = "closed") =>
+     Effect.gen(function* () {
+       const browser = browsers.get(sessionID)
+       if (!browser) return
++      browser.live = false
++      liveLeases.delete(browser.lease)
+       browsers.delete(sessionID)
+       browser.tunnels.dispose()
+       yield* Deferred.succeed(browser.closed, reason)
+     })
+-  yield* Effect.addFinalizer(() => {
+-    active = false
+-    return Effect.forEach(browsers.keys(), (id) => close(id), { discard: true })
+-  })
++  yield* Effect.addFinalizer(() =>
++    Effect.gen(function* () {
++      active = false
++      yield* Effect.forEach(Array.from(browsers.keys()), (id) => close(id), { discard: true })
++      yield* Effect.forEach(Array.from(recipients), reconcile, { discard: true })
++    }),
++  )
++  // Prompt hooks run before core selects its immutable tool/permission snapshot.
++  yield* ctx.session.hook("prompt", ({ sessionID }) =>
++    Effect.gen(function* () {
++      suspended.delete(sessionID)
++      yield* reconcile(sessionID)
++    }),
++  )
+   const tunnels = (input: {
+     sessionID: Session.ID
+     connectionID: string
+@@ -80,7 +162,7 @@
+           const session = yield* ctx.session
+             .get({ sessionID: input.sessionID })
+             .pipe(Effect.mapError(() => call.error("unavailable", "Session not found.", {})))
+-          if (session.location.directory !== ctx.location.directory)
++          if (!sameLocation(session))
+             return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
+           const browser = yield* Effect.acquireRelease(
+             Effect.gen(function* () {
+@@ -88,17 +170,26 @@
+               yield* close(input.sessionID, "replaced")
+               const browser: Attachment = {
+                 connectionID: input.connectionID,
++                lease: prefix + crypto.randomUUID(),
++                live: true,
+                 state: { tabs: [], focusedTabID: null },
+                 closed: yield* Deferred.make<"closed" | "replaced">(),
+                 pending: new Map(),
+                 tunnels: BrowserTunnel.make(),
+               }
+               browsers.set(input.sessionID, browser)
++              issued.add(browser.lease)
++              liveLeases.add(browser.lease)
+               return browser
+             }),
+-            (browser) => (browsers.get(input.sessionID) === browser ? close(input.sessionID) : Effect.void),
++            (browser) =>
++              browsers.get(input.sessionID) === browser
++                ? close(input.sessionID).pipe(Effect.andThen(reconcileAll))
++                : Effect.void,
+           )
+-          yield* grant(input.sessionID)
++          suspended.delete(input.sessionID)
++          yield* reconcileAll
++          if (!browser.live) return yield* Deferred.await(browser.closed)
+           yield* rpc.events
+             .emit("control", { type: "attached", connectionID: input.connectionID, version: 4 })
+             .pipe(Effect.orDie)
+@@ -157,19 +248,52 @@
+     })
+     .pipe(Effect.orDie)
+   yield* ctx.event.subscribe().pipe(
+-    Stream.filter((event) => event.type === "session.deleted" || event.type === "session.moved"),
+-    Stream.runForEach((event) => close(event.data.sessionID)),
++    Stream.filter(
++      (event) =>
++        event.type === "session.created" ||
++        event.type === "session.deleted" ||
++        event.type === "session.moved" ||
++        event.type === "session.execution.interrupted",
++    ),
++    Stream.runForEach((event) =>
++      Effect.gen(function* () {
++        const id = event.data.sessionID
++        if (event.type === "session.created") return yield* reconcile(id)
++        // Invalidate captured routes and wake pending borrowers before any permission IO.
++        epochs.set(id, (epochs.get(id) ?? 0) + 1)
++        suspended.add(id)
++        for (const browser of browsers.values()) {
++          for (const [requestID, pending] of browser.pending) {
++            if (!pending.path.some((item) => item.id === id)) continue
++            yield* Deferred.fail(
++              pending.result,
++              new Tool.Error({
++                message:
++                  "[browser.cancelled] Browser caller or ancestor moved, was deleted, or interrupted; the action may already have run. Inspect its outcome before retrying.",
++              }),
++            )
++            yield* rpc.events
++              .emit("control", { type: "cancel", connectionID: browser.connectionID, requestID })
++              .pipe(Effect.ignore)
++          }
++        }
++        if (event.type !== "session.execution.interrupted") yield* close(id)
++        yield* reconcileAll
++      }),
++    ),
+     Effect.forkScoped({ startImmediately: true }),
+   )
+ 
+   return {
+-    target: Effect.fn("BrowserConnection.target")(function* (sessionID: Session.ID, action: Browser.Action) {
+-      const browser = browsers.get(sessionID)
+-      if (!browser)
++    target: Effect.fn("BrowserConnection.target")(function* (tool: Tool.Context, action: Browser.Action) {
++      yield* reconcile(tool.sessionID)
++      const selected = yield* resolve(tool.sessionID)
++      if (!selected)
+         return yield* new Tool.Error({
+           message:
+-            "[browser.disconnected] No desktop browser is connected to this session. Open this session in the desktop app and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
++            "[browser.disconnected] No desktop browser is connected to this session or an eligible parent. Connect the owning session in the desktop app and wait for it to attach. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
+         })
++      const { browser } = selected
+       const tab = "tabID" in action ? browser.state.tabs.find((tab) => tab.id === action.tabID) : undefined
+       if ("tabID" in action && !tab)
+         return yield* new Tool.Error({
+@@ -177,10 +301,32 @@
+             "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
+         })
+       // Keep the selected attachment and document, even while permissions or file IO wait.
++      const validate = Effect.gen(function* () {
++        yield* ctx.permission.assert({
++          sessionID: tool.sessionID,
++          agent: tool.agent,
++          action: "browser",
++          resources: [browser.lease],
++          source: { type: "tool", messageID: tool.messageID, id: tool.id },
++        })
++        const current = yield* resolve(tool.sessionID)
++        if (
++          !browser.live ||
++          browsers.get(selected.ownerID) !== browser ||
++          current?.browser !== browser ||
++          JSON.stringify(current.path) !== JSON.stringify(selected.path) ||
++          selected.path.some(({ id, epoch }) => (epochs.get(id) ?? 0) !== epoch) ||
++          (tab && !browser.state.tabs.some((item) => item.id === tab.id && item.generation === tab.generation))
++        )
++          return yield* new Tool.Error({
++            message:
++              "[browser.disconnected] The selected browser route or tab changed; no action was dispatched. Call browser.tabs.list({}) before retrying.",
++          })
++      })
+       return {
+         tab,
+         inspect: () =>
+-          request(rpc, browser, action, tab, [], { inspect: true }).pipe(
++          request(rpc, browser, action, tab, [], { inspect: true }, selected.path, validate).pipe(
+             Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
+             Effect.mapError(
+               (error) =>
+@@ -194,7 +340,7 @@
+             ),
+           ),
+         request: (files: readonly Browser.File[], target?: Browser.Target) =>
+-          request(rpc, browser, action, tab, files, { target }),
++          request(rpc, browser, action, tab, files, { target }, selected.path, validate),
+       }
+     }),
+   }
+@@ -207,9 +353,12 @@
+   tab: Browser.Tab | undefined,
+   files: readonly Browser.File[],
+   inspection: Pick<Browser.Command, "inspect" | "target">,
++  path: ReadonlyArray<{ id: Session.ID; epoch: number }>,
++  validate: Effect.Effect<void, Tool.Error>,
+ ) {
+   const requestID = crypto.randomUUID()
+   const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
++  yield* validate
+   const command =
+     (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
+       ? { ...action, paths: files.map((file) => file.name) }
+@@ -217,6 +366,7 @@
+   browser.pending.set(requestID, {
+     command: { action: command, ...(tab ? { generation: tab.generation } : {}), files, ...inspection },
+     result: pending,
++    path,
+   })
+   return yield* rpc.events.emit("control", { type: "command", connectionID: browser.connectionID, requestID }).pipe(
+     Effect.mapError(
+diff --git a/packages/plugin-browser/src/tools.ts b/packages/plugin-browser/src/tools.ts
+--- a/packages/plugin-browser/src/tools.ts
++++ b/packages/plugin-browser/src/tools.ts
+@@ -21,7 +21,7 @@
+       try: () => normalizeAction(input),
+       catch: (error) => new Tool.Error({ message: invalidURL, error }),
+     })
+-    const target = yield* connection.target(tool.sessionID, action)
++    const target = yield* connection.target(tool, action)
+     const uploads =
+       action.type === "files.upload" || action.type === "files.drop"
+         ? yield* BrowserFiles.read(action.paths, ctx.location.directory)

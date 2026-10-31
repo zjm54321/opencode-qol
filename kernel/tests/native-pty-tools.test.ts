@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test"
+import { createRequire } from "node:module"
 import path from "node:path"
 
 // Host-service isolation, not a replacement PTY. Real protocol/runtime tests
@@ -17,17 +18,16 @@ describe.skipIf(!modules)("native PTY tools with native Effect and isolated host
     E = await import(effectPath)
     const { Effect, Context, Queue, Stream } = E
     services = {}
-    for (const name of ["PersistentPty", "Permission", "Location", "Session", "Bus", "FileAccess", "Environment", "Config", "ShellSelect"])
+    for (const name of ["PersistentPty", "Permission", "Location", "Session", "Bus", "FileAccess", "Environment", "ShellSelect"])
       services[name] = Context.Service(`test.native.${name}`)
     class ToolFailure extends Error { constructor(input: any) { super(input.message); Object.assign(this, input) } }
-    mock.module("@opencode/ai", () => ({ ToolFailure }))
+    mock.module(createRequire(source).resolve("@opencode/ai/effect"), () => ({ ToolFailure }))
     for (const [name, relative] of Object.entries({ PersistentPty: "../../persistent-pty.js", Permission: "../../permission.js",
       Location: "../../location.js", Session: "../../session.js", Bus: "../../bus.js", FileAccess: "../../file-access.js",
-      Environment: "../../environment/index.js", Config: "../../config.js", ShellSelect: "../../shell/select.js" })) {
+      Environment: "../../environment/index.js", ShellSelect: "../../shell/select.js" })) {
       const implementation = () => ({ [name]: { Service: services[name],
         ...(name === "FileAccess" ? { resolvePath: path.resolve } : {}),
-        ...(name === "Environment" ? { typeFollowing: () => Effect.succeed("directory") } : {}),
-        ...(name === "Config" ? { latest: () => ({ portable_shell_scanner: true }) } : {}) } })
+        ...(name === "Environment" ? { typeFollowing: () => Effect.succeed("directory") } : {}) } })
       mock.module(internal(relative), implementation)
       mock.module(relative, implementation)
     }
@@ -36,7 +36,6 @@ describe.skipIf(!modules)("native PTY tools with native Effect and isolated host
     } } })
     mock.module(internal("../../shell/parse.js"), parser)
     mock.module("../../shell/parse.js", parser)
-    mock.module("#shell-parser-wasm", () => ({ shellParserWasm: { bash: "" } }))
     Plugin = (await import(source)).Plugin
     terminals = new Map(); notifications = new Map(); callbacks = new Map(); deleted = new Set()
     assertions = []; writes = []; shellCommands = []; tools = new Map()
@@ -70,7 +69,7 @@ describe.skipIf(!modules)("native PTY tools with native Effect and isolated host
       },
       Bus: { subscribe: () => Stream.fromQueue(busQueue) },
       FileAccess: { resolve: (input: any) => Effect.succeed({ absolute: input.path }), authorizeExternal: () => Effect.void },
-      Environment: { files: {} }, Config: { entries: () => Effect.succeed([]) }, ShellSelect: { resolve: () => Effect.succeed("bash") },
+      Environment: { files: {} }, ShellSelect: { resolve: () => Effect.succeed("bash") },
     }
     scope = await Effect.runPromise(E.Scope.make())
     let effect = Plugin.effect({ app: { channel: "local" }, session: { hook: (_event: string, fn: any) => Effect.sync(() => { hook = fn }) },

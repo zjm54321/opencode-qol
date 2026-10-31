@@ -29,9 +29,10 @@ let
     src = opencode.outPath;
     patches = [ ../patches/nix-persistent-pty.patch ];
   };
-  # Keep the official dependency graph and output hash; avoid Bun 1.4.2's
+  # Keep the official dependency graph; avoid Bun 1.4.2's
   # streaming download/extraction stall and make fetch failures bounded/visible.
   nodeModules = opencode.packages.${system}.opencode.node_modules.overrideAttrs (old: {
+    outputHash = "sha256-+GgLX4lq8fPOJVoDGp220uiCTLB0ZwrBkcNo36q9MZU=";
     BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL = "1";
     BUN_CONFIG_HTTP_IDLE_TIMEOUT = "45";
     BUN_CONFIG_HTTP_RETRY_COUNT = "2";
@@ -66,8 +67,8 @@ upstream.overrideAttrs (old: {
       const { createRequire } = require("node:module");
       const { resolve } = require("node:path");
       const core = createRequire(resolve("packages/core/package.json"));
-      const pty = createRequire(core.resolve("@opencode-ai/pty/package.json"));
-      console.log(pty.resolve("@opencode-ai/pty-linux-" + process.arch + "-gnu/bin/opencode-pty"));
+      const pty = createRequire(core.resolve("@opencode/pty/package.json"));
+      console.log(pty.resolve("@opencode/pty-linux-" + process.arch + "-gnu/bin/opencode-pty"));
     ')"
     ptyBinary="$(realpath "$ptyBinary")"
     case "$ptyBinary" in

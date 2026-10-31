@@ -22,7 +22,7 @@ async function harness(edit?: (ctx: ServerContext, deps: Dependencies) => void) 
   const location = { directory: "/workspace", workspaceID: "ws-current" };
   const session = { id: "ses-current", projectID: "project-current", location };
   const ctx: ServerContext = {
-    app: { version: "2.1.4", channel: "latest" },
+    app: { version: "2.2.5", channel: "latest" },
     location: { ...location, project: { id: session.projectID } },
     session: {
       get: mock(async () => { calls.push("get"); return session; }),

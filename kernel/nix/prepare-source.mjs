@@ -216,9 +216,10 @@ for (const entry of ["src/cli.ts", "src/inline-engine.ts"]) {
   await replaceOnce(path.join(billion, entry), "    ensureConfigTemplate();",
     "    // QoL: baked defaults need no automatically created user config.")
 }
+const billionVersion = JSON.parse(await fs.readFile(path.join(billion, "package.json"), "utf8")).version
 await replaceOnce(path.join(billion, "scripts/write-build-info.mjs"),
   "const info = { commit: buildCommit() };",
-  'const info = { commit: "v0.1.206" };')
+  `const info = { commit: ${JSON.stringify(`v${billionVersion}`)} };`)
 
 // OMO's official V1 factory still uses the legacy identity/schema helper. Import
 // only its official ./tool subpath, not the index that re-exports an SDK client.

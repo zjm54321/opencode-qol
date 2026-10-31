@@ -4,8 +4,8 @@ let
     type = "github";
     owner = "NixOS";
     repo = "nixpkgs";
-    rev = "02c087f3fe673c9e317f206a627cb6b910336dbe";
-    narHash = "sha256-IoNisKcGbUjdd45qCqywGMCYmZ5EnkxezvLII0FWwNA=";
+    rev = "885ba4d038f10c3d17d7a92e8c3cc185b99c9158";
+    narHash = "sha256-e/yiZ31gXRROBDcnOtT3YwDQ73NVG9Cepccbt86LIn8=";
   });
   tools = import toolsSource { inherit (pkgs.stdenv.hostPlatform) system; };
   inherit (tools) lib;
@@ -47,7 +47,7 @@ let
   };
 in
 assert upstreamCodegraph.version == "1.6.2";
-assert nixos.version == "3.0.1";
+assert nixos.version == "3.0.2";
 {
   config = tools.writeText "opencode-qol-mcp-servers.json" (builtins.toJSON servers);
   astGrep = tools.ast-grep;

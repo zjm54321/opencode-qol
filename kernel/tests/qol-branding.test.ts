@@ -54,10 +54,10 @@ afterAll(async () => {
 
 describe("display version", () => {
   test("appends -qol exactly once to the real base version", () => {
-    expect(mod.qolVersion("2.1.4")).toBe("2.1.4-qol");
-    expect(mod.qolVersion("2.1.4-qol")).toBe("2.1.4-qol");
-    expect(mod.qolVersion(mod.qolVersion("2.1.4"))).toBe("2.1.4-qol");
-    expect(mod.qolVersion("v2.1.4")).toBe("2.1.4-qol");
+    expect(mod.qolVersion("2.2.5")).toBe("2.2.5-qol");
+    expect(mod.qolVersion("2.2.5-qol")).toBe("2.2.5-qol");
+    expect(mod.qolVersion(mod.qolVersion("2.2.5"))).toBe("2.2.5-qol");
+    expect(mod.qolVersion("v2.2.5")).toBe("2.2.5-qol");
     expect(mod.qolVersion("local")).toBe("local-qol");
     expect(mod.qolVersion("")).toBe("");
   });
@@ -68,9 +68,9 @@ describe("display version", () => {
     for (const line of patch.split("\n").filter((l) => l.startsWith("+"))) expect(line).not.toMatch(/\d+\.\d+\.\d+/);
   });
 
-  test("visible label is v2.1.4-qol and never doubles the v or suffix", () => {
-    expect(mod.qolVersionLabel("2.1.4")).toBe("v2.1.4-qol");
-    expect(mod.qolVersionLabel("v2.1.4-qol")).toBe("v2.1.4-qol");
+  test("visible label is v2.2.5-qol and never doubles the v or suffix", () => {
+    expect(mod.qolVersionLabel("2.2.5")).toBe("v2.2.5-qol");
+    expect(mod.qolVersionLabel("v2.2.5-qol")).toBe("v2.2.5-qol");
     expect(mod.qolVersionLabel("local")).toBe("local-qol");
   });
 

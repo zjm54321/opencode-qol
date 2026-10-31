@@ -1,5 +1,7 @@
-{ lib, stdenv, rustPlatform, zig_0_16, cacert, pty-src, ghostty-src }:
+{ lib, stdenv, rustPlatform, zig_0_16, cacert, opencode, ghostty-src }:
 let
+  daemonSource = "${opencode.outPath}/packages/process-daemon";
+  coreVersion = (builtins.fromJSON (builtins.readFile "${opencode.outPath}/packages/cli/package.json")).version;
   # Zig verifies every package against build.zig.zon's content hash. The fixed
   # output hash also locks the complete fetched closure, including lazy deps.
   zigDeps = stdenv.mkDerivation {
@@ -39,22 +41,23 @@ let
   };
 in rustPlatform.buildRustPackage {
   pname = "opencode-pty-qol";
-  version = "0.3.1";
-  src = pty-src;
+  version = "${coreVersion}-qol";
+  src = daemonSource;
   patches = [ ../patches/native-pty-daemon.patch ];
-  cargoHash = "sha256-tki20r+3X3kMNfOcweVVr3wlwnruZ6D1hCxvBslk19o=";
+  cargoHash = "sha256-ZNQFrdwOSCaLem5RQEeqxF8iOwmybFW3GsLMkWLASa4=";
   OPENCODE_GHOSTTY_LIB_DIR = "${ghosttyVt}/lib";
   postInstall = ''
     mkdir -p "$out/share/licenses/opencode-pty-qol" "$out/share/doc/opencode-pty-qol"
-    cp ${pty-src}/LICENSE "$out/share/licenses/opencode-pty-qol/opencode-pty-MIT-LICENSE"
+    cp ${daemonSource}/LICENSE "$out/share/licenses/opencode-pty-qol/opencode-pty-MIT-LICENSE"
     cp ${ghostty-src}/LICENSE "$out/share/licenses/opencode-pty-qol/ghostty-MIT-LICENSE"
-    cp ${pty-src}/Cargo.lock ${pty-src}/ghostty-revision "$out/share/doc/opencode-pty-qol/"
+    cp ${daemonSource}/Cargo.lock ${daemonSource}/ghostty-revision "$out/share/doc/opencode-pty-qol/"
     cp ${ghostty-src}/build.zig.zon "$out/share/doc/opencode-pty-qol/ghostty-build.zig.zon"
     cp ${builtins.toFile "opencode-pty-qol-SOURCES.json" (builtins.toJSON {
       daemon = {
-        repository = "https://github.com/anomalyco/opencode-pty";
-        revision = pty-src.rev;
-        version = "0.3.1";
+        repository = "https://github.com/anomalyco/opencode";
+        directory = "packages/process-daemon";
+        revision = opencode.rev;
+        version = coreVersion;
         license = "MIT";
       };
       ghostty = {

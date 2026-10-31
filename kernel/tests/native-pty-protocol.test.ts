@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test"
+import { createRequire } from "node:module"
 import { mkdtemp, rm } from "node:fs/promises"
 import path from "node:path"
 
@@ -44,7 +45,7 @@ describe.skipIf(!source || !modules || !binary)("patched official core/native wi
     const schema = await import(path.resolve(path.dirname(source!), "../../../schema/src/persistent-pty.ts"))
     const decodeInfo = E.Schema.decodeUnknownSync(schema.Info)
     const info = { id: "pty_1", title: "core-wire", command: "bash", args: [], cwd: directory,
-      status: "running", pid: created.terminal.pid, sessionID: "ses_contract", foregroundProcess: null,
+      status: "running", pid: created.terminal.pid, sessionID: "ses_contract", userTitle: null, foregroundProcess: null,
       size: { cols: 80, rows: 24 }, output: { head: 0, tail: 0 } }
     for (const value of [undefined, null]) {
       expect(decodeInfo({ ...info, tool: value, createdAt: value, exitSignal: value,
@@ -81,8 +82,9 @@ describe.skipIf(!source || !modules || !binary)("patched official core/native wi
     // The layer, schemas, transport, subscriptions and daemon are production code.
     const busTag = E.Context.Service("test.native.protocol.Bus")
     const globalTag = E.Context.Service("test.native.protocol.Global")
-    mock.module("@opencode/util/effect/app-node", () => ({ makeGlobalNode: (options: any) => options }))
-    mock.module("@opencode/util/global", () => ({ Global: { Service: globalTag } }))
+    const require = createRequire(source!)
+    mock.module(require.resolve("@opencode/util/effect/app-node"), () => ({ makeGlobalNode: (options: any) => options }))
+    mock.module(require.resolve("@opencode/util/global"), () => ({ Global: { Service: globalTag } }))
     mock.module("../bus.js", () => ({ Bus: { Service: busTag } }))
     mock.module(path.resolve(path.dirname(source!), "../bus.js"), () => ({ Bus: { Service: busTag } }))
     mock.module("../shell/select.js", () => ({ ShellSelect: { environment: () => "bash" } }))
@@ -91,7 +93,7 @@ describe.skipIf(!source || !modules || !binary)("patched official core/native wi
     const coreService = await import(path.join(path.dirname(source!), "index.ts"))
     const context = await E.Effect.runPromise(E.Layer.build(coreService.configured({ root: directory }).layer).pipe(
       E.Effect.provideService(E.Scope.Scope, scope),
-      E.Effect.provideService(busTag, { publish: () => E.Effect.void }),
+      E.Effect.provideService(busTag, { publish: () => E.Effect.void, subscribe: () => E.Stream.empty }),
       E.Effect.provideService(globalTag, { state: directory, bin: directory }),
     ))
     const pty = E.Context.get(context, coreService.Service)
@@ -105,6 +107,9 @@ describe.skipIf(!source || !modules || !binary)("patched official core/native wi
       expect(listed[0]).toMatchObject({ id: terminal.id, status: "running" })
       expect(listed[0]).not.toHaveProperty("exitSignal")
       expect(listed[0]).not.toHaveProperty("terminationError")
+      const renamed = await E.Effect.runPromise(pty.rename(terminal.id, "renamed tool pane"))
+      expect(renamed.userTitle).toBe("renamed tool pane")
+      expect(renamed.tool.retainOnExit).toBe(true)
       const ended = (role: string) => {
         let done!: () => void
         const promise = new Promise<void>((resolve) => { done = resolve })

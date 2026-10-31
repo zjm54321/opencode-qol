@@ -19,15 +19,15 @@
     "semver": "7.8.5",
     "turndown": "7.2.4",
     "zod": "4.6.7",
-    "@opencode-ai/plugin": "1.19.4",
+    "@opencode-ai/plugin": "1.19.5",
     "esbuild": "0.28.2",
     "fzstd": "0.1.1",
-    "node-forge": "1.4.0",
+    "node-forge": "1.4.2",
     "tar": "7.5.22",
     "tsup": "9.0.0",
     "typebox": "1.4.3",
     "typescript": "7.0.2",
     "undici": "8.12.3",
-    "ws": "8.22.0"
+    "ws": "8.22.1"
   }
 }

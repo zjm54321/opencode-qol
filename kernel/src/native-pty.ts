@@ -1,7 +1,7 @@
 // Built into packages/core/src/plugin/qol. The official daemon owns all output,
 // child lifetimes and timeout deadlines; this plugin owns only subscriptions.
 import path from "node:path"
-import { ToolFailure } from "@opencode/ai"
+import { ToolFailure } from "@opencode/ai/effect"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import { PersistentPty as PtySchema } from "@opencode/schema/persistent-pty"
 import { SessionEvent } from "@opencode/schema/session-event"
@@ -10,7 +10,6 @@ import { Pty } from "@opencode/schema/pty"
 import type { Tool } from "@opencode/schema/tool"
 import { Deferred, Effect, Schema, Scope, Stream } from "effect"
 import { Bus } from "../../bus.js"
-import { Config } from "../../config.js"
 import { Environment } from "../../environment/index.js"
 import { FileAccess } from "../../file-access.js"
 import { Location } from "../../location.js"
@@ -19,7 +18,6 @@ import { PersistentPty } from "../../persistent-pty.js"
 import { Session } from "../../session.js"
 import { ShellParse } from "../../shell/parse.js"
 import { ShellSelect } from "../../shell/select.js"
-import { shellParserWasm } from "#shell-parser-wasm"
 import { compilePattern, transcript, unescapeInput } from "./native-pty/transcript.js"
 
 const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
@@ -65,7 +63,6 @@ export const Plugin = {
     const scope = yield* Scope.Scope
     const access = yield* FileAccess.Service
     const environment = yield* Environment.Service
-    const config = yield* Config.Service
     const shellSelect = yield* ShellSelect.Service
     const shell = yield* shellSelect.resolve({ priority: "compat" })
     const runtime = yield* Effect.context()
@@ -87,9 +84,7 @@ export const Plugin = {
     // resource/save rules. No bespoke command parser or permission namespace.
     const authorizeShell = (command: string, cwd: string, context: Tool.Context) => Effect.gen(function* () {
       const target = yield* access.resolve({ path: cwd, kind: "directory" })
-      const portable = Config.latest(yield* config.entries(), "experimental")?.portable_shell_scanner ??
-        (shellParserWasm.bash === "" || ctx.app.channel === "local" || ctx.app.channel === "dev")
-      const parsed = yield* ShellParse.scan(command, shell, target.absolute, { portable })
+      const parsed = yield* ShellParse.scan(command, shell, target.absolute)
       const directories = yield* Effect.forEach(parsed.directories, (directory) =>
         access.resolve({ path: FileAccess.resolvePath(target.absolute, directory), kind: "directory" }))
       yield* access.authorizeExternal([target, ...directories], context)

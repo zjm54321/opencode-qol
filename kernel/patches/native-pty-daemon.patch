@@ -35,10 +35,10 @@ index 1dbf842..8e9997e 100644
      println!("cargo:rerun-if-changed=ghostty-revision");
      println!("cargo:rerun-if-changed=src/ghostty/ffi.rs");
 diff --git a/src/client.rs b/src/client.rs
-index 83879c9..ff2fb54 100644
+index ea7503d..7ca28d9 100644
 --- a/src/client.rs
 +++ b/src/client.rs
-@@ -156,6 +156,7 @@ impl TerminalClient {
+@@ -157,6 +157,7 @@ impl TerminalClient {
  
      pub fn create(&self, request: CreateTerminal) -> Result<TerminalInfo> {
          match self.request(Request::Create {
@@ -46,7 +46,7 @@ index 83879c9..ff2fb54 100644
              program: request.program,
              args: request.args,
              cwd: request.cwd,
-@@ -579,6 +580,7 @@ fn play(directory: &Path) -> Result<()> {
+@@ -580,6 +581,7 @@ fn play(directory: &Path) -> Result<()> {
                      CreateTerminal::shell()?
                  } else {
                      CreateTerminal {
@@ -54,7 +54,7 @@ index 83879c9..ff2fb54 100644
                          title: words[0].clone(),
                          group_id: format!("playground:{}", env::current_dir()?.display()),
                          env: std::collections::HashMap::new(),
-@@ -656,6 +658,7 @@ fn play(directory: &Path) -> Result<()> {
+@@ -657,6 +659,7 @@ fn play(directory: &Path) -> Result<()> {
              "demo" => {
                  let executable = env::current_exe()?;
                  let info = client.create(CreateTerminal {
@@ -63,10 +63,10 @@ index 83879c9..ff2fb54 100644
                      group_id: format!("playground:{}", env::current_dir()?.display()),
                      env: std::collections::HashMap::new(),
 diff --git a/src/daemon/server.rs b/src/daemon/server.rs
-index b3603ad..add1e5e 100644
+index 7f07eba..9da578a 100644
 --- a/src/daemon/server.rs
 +++ b/src/daemon/server.rs
-@@ -360,6 +360,7 @@ fn dispatch(
+@@ -458,6 +458,7 @@ fn dispatch(
              env,
              cols,
              rows,
@@ -74,7 +74,7 @@ index b3603ad..add1e5e 100644
          } => Response::Created {
              terminal: service.create(CreateTerminal {
                  program,
-@@ -370,6 +371,7 @@ fn dispatch(
+@@ -468,6 +469,7 @@ fn dispatch(
                  env,
                  cols,
                  rows,
@@ -82,7 +82,7 @@ index b3603ad..add1e5e 100644
              })?,
          },
          Request::List => Response::Terminals {
-@@ -448,6 +450,10 @@ fn dispatch(
+@@ -550,6 +552,10 @@ fn dispatch(
              }
          }
          Request::Subscribe { .. } => unreachable!("subscriptions are handled before dispatch"),
@@ -94,7 +94,7 @@ index b3603ad..add1e5e 100644
              service.terminate(id)?;
              Response::Ok
 diff --git a/src/protocol.rs b/src/protocol.rs
-index 26f05b7..be7f21a 100644
+index 80e5c0b..d600985 100644
 --- a/src/protocol.rs
 +++ b/src/protocol.rs
 @@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
@@ -103,10 +103,10 @@ index 26f05b7..be7f21a 100644
  
 -pub const PROTOCOL_VERSION: u32 = 7;
 +pub const PROTOCOL_VERSION: u32 = 8;
- pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
- const OUTPUT_FRAME_TAG: u8 = 0;
+ /// Additive capabilities of this daemon. Breaking changes bump `PROTOCOL_VERSION`.
+ pub const FEATURES: &[&str] = &["rename"];
  
-@@ -41,6 +41,8 @@ pub enum Request {
+@@ -47,6 +47,8 @@ pub enum Request {
          env: std::collections::HashMap<String, String>,
          cols: u16,
          rows: u16,
@@ -115,7 +115,7 @@ index 26f05b7..be7f21a 100644
      },
      List,
      Write {
-@@ -88,6 +90,7 @@ pub enum Request {
+@@ -98,6 +100,7 @@ pub enum Request {
      Terminate {
          id: TerminalId,
      },
@@ -124,10 +124,10 @@ index 26f05b7..be7f21a 100644
  }
  
 diff --git a/src/service.rs b/src/service.rs
-index 6b13c8b..3bf3df2 100644
+index bea34d7..00277df 100644
 --- a/src/service.rs
 +++ b/src/service.rs
-@@ -42,6 +42,12 @@ pub enum TerminalLifecycle {
+@@ -43,6 +43,12 @@ pub enum TerminalLifecycle {
  
  #[derive(Clone, Debug, Serialize, Deserialize)]
  pub struct TerminalInfo {
@@ -139,8 +139,8 @@ index 6b13c8b..3bf3df2 100644
 +    pub termination_error: Option<String>,
      pub id: TerminalId,
      pub pid: Option<u32>,
-     pub title: String,
-@@ -136,6 +142,7 @@ impl Drop for TerminalAttachment {
+     /// Effective title: the user title, else the latest non-empty OSC title,
+@@ -141,6 +147,7 @@ impl Drop for TerminalAttachment {
  
  #[derive(Clone, Debug)]
  pub struct CreateTerminal {
@@ -148,7 +148,7 @@ index 6b13c8b..3bf3df2 100644
      pub program: String,
      pub args: Vec<String>,
      pub cwd: PathBuf,
-@@ -155,6 +162,7 @@ impl CreateTerminal {
+@@ -160,6 +167,7 @@ impl CreateTerminal {
              .unwrap_or("shell")
              .to_string();
          Ok(Self {
@@ -156,7 +156,7 @@ index 6b13c8b..3bf3df2 100644
              program,
              args: Vec::new(),
              cwd: env::current_dir()?,
-@@ -360,6 +368,10 @@ impl TerminalService {
+@@ -375,6 +383,10 @@ impl TerminalService {
          })
      }
  
@@ -167,7 +167,7 @@ index 6b13c8b..3bf3df2 100644
      pub fn terminate(&self, id: TerminalId) -> Result<()> {
          let terminal = self
              .terminals
-@@ -413,11 +425,44 @@ struct TerminalHandle {
+@@ -430,11 +442,44 @@ struct TerminalHandle {
      /// Disconnects when the actor thread exits; never carries a message.
      actor_done: Receiver<()>,
      shutdown_tx: Mutex<Option<Sender<()>>>,
@@ -211,9 +211,9 @@ index 6b13c8b..3bf3df2 100644
 +}
 +
  impl TerminalHandle {
-     fn spawn(id: TerminalId, request: CreateTerminal, replay_capacity: usize) -> Result<Self> {
-         let pty_system = native_pty_system();
-@@ -444,7 +489,7 @@ impl TerminalHandle {
+     fn spawn(
+         id: TerminalId,
+@@ -466,7 +511,7 @@ impl TerminalHandle {
              .spawn_command(command)
              .with_context(|| format!("failed to spawn {}", request.program))?;
          let pid = child.process_id();
@@ -222,7 +222,7 @@ index 6b13c8b..3bf3df2 100644
          let mut reader = pair
              .master
              .try_clone_reader()
-@@ -456,6 +501,12 @@ impl TerminalHandle {
+@@ -478,6 +523,12 @@ impl TerminalHandle {
          drop(pair.slave);
  
          let info = Arc::new(RwLock::new(TerminalInfo {
@@ -235,7 +235,7 @@ index 6b13c8b..3bf3df2 100644
              id,
              pid,
              title: request.title,
-@@ -472,6 +523,15 @@ impl TerminalHandle {
+@@ -495,6 +546,15 @@ impl TerminalHandle {
              output_tail: 0,
          }));
  
@@ -251,7 +251,7 @@ index 6b13c8b..3bf3df2 100644
          let (actor_tx, actor_rx) = bounded(ACTOR_QUEUE_CAPACITY);
          let (writer_tx, writer_rx) = bounded(WRITER_QUEUE_CAPACITY);
          // Disconnecting this channel wakes every cancellable queue operation,
-@@ -503,6 +563,7 @@ impl TerminalHandle {
+@@ -526,6 +586,7 @@ impl TerminalHandle {
                      cols: request.cols,
                      rows: request.rows,
                      init_tx,
@@ -259,7 +259,7 @@ index 6b13c8b..3bf3df2 100644
                  });
                  if let Err(error) = result {
                      eprintln!("terminal {id} actor failed: {error:#}");
-@@ -516,8 +577,7 @@ impl TerminalHandle {
+@@ -539,8 +600,7 @@ impl TerminalHandle {
          {
              Ok(()) => {}
              Err(error) => {
@@ -269,7 +269,7 @@ index 6b13c8b..3bf3df2 100644
                  let _ = actor_thread.join();
                  bail!(error);
              }
-@@ -572,6 +632,7 @@ impl TerminalHandle {
+@@ -595,6 +655,7 @@ impl TerminalHandle {
              .context("failed to spawn terminal reader")?;
  
          let wait_actor_tx = actor_tx.clone();
@@ -277,7 +277,7 @@ index 6b13c8b..3bf3df2 100644
          let wait_thread = thread::Builder::new()
              .name(format!("opencode-pty-wait-{id}"))
              .spawn(move || {
-@@ -580,7 +641,12 @@ impl TerminalHandle {
+@@ -603,7 +664,12 @@ impl TerminalHandle {
                  #[cfg(unix)]
                  {
                      let mut child = child;
@@ -291,7 +291,7 @@ index 6b13c8b..3bf3df2 100644
                      let _ = wait_actor_tx.send(ActorMessage::ChildExited(
                          result.map_err(|error| error.to_string()),
                      ));
-@@ -592,7 +658,7 @@ impl TerminalHandle {
+@@ -616,7 +682,7 @@ impl TerminalHandle {
              actor_tx,
              actor_done,
              shutdown_tx: Mutex::new(Some(shutdown_tx)),
@@ -300,7 +300,7 @@ index 6b13c8b..3bf3df2 100644
              info,
              joins: Mutex::new(Some(vec![
                  actor_thread,
-@@ -658,6 +724,7 @@ fn await_reply<T>(reply: &Receiver<Result<T>>, actor_done: &Receiver<()>) -> Res
+@@ -682,6 +748,7 @@ fn await_reply<T>(reply: &Receiver<Result<T>>, actor_done: &Receiver<()>) -> Res
  }
  
  enum ActorMessage {
@@ -308,7 +308,7 @@ index 6b13c8b..3bf3df2 100644
      Output(Vec<u8>),
      ReaderEof,
      ReaderFailed(String),
-@@ -772,6 +839,7 @@ impl Drop for ActorMaster {
+@@ -800,6 +867,7 @@ impl Drop for ActorMaster {
  }
  
  struct ActorConfig {
@@ -316,7 +316,7 @@ index 6b13c8b..3bf3df2 100644
      master: ActorMaster,
      messages: Receiver<ActorMessage>,
      writes: Sender<WriterMessage>,
-@@ -794,6 +862,7 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+@@ -822,6 +890,7 @@ fn run_actor(config: ActorConfig) -> Result<()> {
          cols,
          rows,
          init_tx,
@@ -324,7 +324,7 @@ index 6b13c8b..3bf3df2 100644
      } = config;
      #[cfg(windows)]
      let mut master = master;
-@@ -811,10 +880,41 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+@@ -845,10 +914,41 @@ fn run_actor(config: ActorConfig) -> Result<()> {
      let mut reader_eof = false;
      let mut final_exit = None::<StreamEvent>;
      let mut pending_message = None;
@@ -367,7 +367,7 @@ index 6b13c8b..3bf3df2 100644
              #[cfg(not(windows))]
              Ok(ActorMessage::RefreshForegroundProcess { reply }) => {
                  if let Ok(master) = master.get() {
-@@ -880,7 +980,8 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+@@ -907,7 +1007,8 @@ fn run_actor(config: ActorConfig) -> Result<()> {
                  reply,
              }) => {
                  let result =
@@ -377,7 +377,7 @@ index 6b13c8b..3bf3df2 100644
                          #[cfg(windows)]
                          master.get()?;
                          queue_write(&writes, &shutdown, bytes)
-@@ -894,7 +995,7 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+@@ -921,7 +1022,7 @@ fn run_actor(config: ActorConfig) -> Result<()> {
                  reply,
              }) => {
                  let result = (|| {
@@ -386,7 +386,7 @@ index 6b13c8b..3bf3df2 100644
                      master.get()?.resize(PtySize {
                          rows,
                          cols,
-@@ -1167,6 +1268,8 @@ fn run_actor(config: ActorConfig) -> Result<()> {
+@@ -1214,6 +1315,8 @@ fn run_actor(config: ActorConfig) -> Result<()> {
                  event.clone(),
              );
              final_exit = Some(event);
@@ -395,7 +395,7 @@ index 6b13c8b..3bf3df2 100644
          }
      };
      // Release senders blocked on the actor queue before closing ConPTY. Its
-@@ -1190,6 +1293,7 @@ fn receive_actor_message(
+@@ -1237,6 +1340,7 @@ fn receive_actor_message(
      messages: &Receiver<ActorMessage>,
      pending: &mut Option<ActorMessage>,
      shutdown: &Receiver<()>,
@@ -403,7 +403,7 @@ index 6b13c8b..3bf3df2 100644
  ) -> std::result::Result<ActorMessage, crossbeam_channel::RecvTimeoutError> {
      if matches!(
          shutdown.try_recv(),
-@@ -1202,6 +1306,7 @@ fn receive_actor_message(
+@@ -1249,6 +1353,7 @@ fn receive_actor_message(
          None => crossbeam_channel::select_biased! {
              recv(shutdown) -> _ => return Err(crossbeam_channel::RecvTimeoutError::Disconnected),
              recv(messages) -> message => message.map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)?,
@@ -411,7 +411,7 @@ index 6b13c8b..3bf3df2 100644
          },
      };
      let ActorMessage::Output(mut bytes) = message else {
-@@ -1575,6 +1680,7 @@ fn promote_latest(
+@@ -1649,6 +1754,7 @@ fn promote_latest(
      subscribers.retain(|_, subscriber| !subscriber.is_disconnected());
      let attachment_id = subscribers
          .iter()
@@ -419,7 +419,7 @@ index 6b13c8b..3bf3df2 100644
          .max_by_key(|(_, subscriber)| subscriber.last_control)
          .map(|(attachment_id, _)| attachment_id.clone())?;
      if let Some(subscriber) = subscribers.get_mut(&attachment_id) {
-@@ -1584,6 +1690,42 @@ fn promote_latest(
+@@ -1658,6 +1764,42 @@ fn promote_latest(
      Some(attachment_id)
  }
  
@@ -462,7 +462,7 @@ index 6b13c8b..3bf3df2 100644
  fn authorize_controller(controller: &Option<String>, attachment_id: Option<&str>) -> Result<()> {
      let Some(attachment_id) = attachment_id else {
          if controller.is_none() {
-@@ -1661,6 +1803,12 @@ mod tests {
+@@ -1735,6 +1877,12 @@ mod tests {
  
      fn test_info() -> TerminalInfo {
          TerminalInfo {
@@ -475,7 +475,7 @@ index 6b13c8b..3bf3df2 100644
              id: 1,
              pid: None,
              title: "test".into(),
-@@ -1679,6 +1827,16 @@ mod tests {
+@@ -1754,6 +1902,16 @@ mod tests {
      // Real actor/parser and bounded channels, without OS pipe capacity or a
      // large output flood. Native child/handle coverage lives in tests/runtime.rs.
      fn test_actor() -> (TerminalHandle, Receiver<WriterMessage>) {
@@ -492,7 +492,7 @@ index 6b13c8b..3bf3df2 100644
          let (actor_tx, messages) = bounded(ACTOR_QUEUE_CAPACITY);
          let (writes, writer_rx) = bounded(1);
          let (shutdown_tx, shutdown) = bounded(0);
-@@ -1691,7 +1849,7 @@ mod tests {
+@@ -1766,7 +1924,7 @@ mod tests {
              }
          });
          let (init_tx, init_rx) = std_mpsc::sync_channel(1);
@@ -501,7 +501,7 @@ index 6b13c8b..3bf3df2 100644
          let actor_info = Arc::clone(&info);
          let (actor_done_tx, actor_done) = bounded::<()>(0);
          let actor = thread::spawn(move || {
-@@ -1710,6 +1868,7 @@ mod tests {
+@@ -1785,6 +1943,7 @@ mod tests {
                  cols: 80,
                  rows: 24,
                  init_tx,
@@ -509,7 +509,7 @@ index 6b13c8b..3bf3df2 100644
              })
              .unwrap()
          });
-@@ -1719,7 +1878,7 @@ mod tests {
+@@ -1795,7 +1954,7 @@ mod tests {
                  actor_tx,
                  actor_done,
                  shutdown_tx: Mutex::new(Some(shutdown_tx)),
@@ -518,7 +518,7 @@ index 6b13c8b..3bf3df2 100644
                  info,
                  joins: Mutex::new(Some(vec![
                      actor,
-@@ -1731,6 +1890,120 @@ mod tests {
+@@ -1807,6 +1966,120 @@ mod tests {
          )
      }
  
@@ -639,7 +639,7 @@ index 6b13c8b..3bf3df2 100644
      #[test]
      #[cfg(windows)]
      fn windows_list_reads_metadata_without_an_actor_request() {
-@@ -2485,11 +2758,11 @@ mod tests {
+@@ -2624,11 +2897,11 @@ mod tests {
          let mut pending = None;
  
          assert!(matches!(
@@ -654,7 +654,7 @@ index 6b13c8b..3bf3df2 100644
          ));
      }
 diff --git a/tests/ownership.rs b/tests/ownership.rs
-index a9f6725..fe2f9f3 100644
+index f74f162..0cbfaf2 100644
 --- a/tests/ownership.rs
 +++ b/tests/ownership.rs
 @@ -102,6 +102,7 @@ impl Daemon {
@@ -666,7 +666,7 @@ index a9f6725..fe2f9f3 100644
              args: vec!["-c".into(), command.into()],
              cwd: self.directory.clone(),
 diff --git a/tests/service.rs b/tests/service.rs
-index 6fbac90..113bb3e 100644
+index 7293c6a..13cbf2d 100644
 --- a/tests/service.rs
 +++ b/tests/service.rs
 @@ -61,6 +61,7 @@ fn repeated_resize_reports_are_delivered_once() {
@@ -702,7 +702,7 @@ index cdea300..8db16ac 100644
              args: [
                  "--ignored",
 diff --git a/tests/windows-daemon.rs b/tests/windows-daemon.rs
-index 281f0fa..c35ca81 100644
+index 86cf448..f8bae10 100644
 --- a/tests/windows-daemon.rs
 +++ b/tests/windows-daemon.rs
 @@ -85,6 +85,7 @@ impl Daemon {

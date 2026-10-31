@@ -2,12 +2,8 @@
   description = "OpenCode Solution: pinned OpenCode with built-in quality-of-life plugins";
 
   inputs = {
-    opencode.url = "github:anomalyco/opencode/v2.1.4";
+    opencode.url = "github:anomalyco/opencode/v2.2.5";
     nixpkgs.follows = "opencode/nixpkgs";
-    pty-src = {
-      url = "github:anomalyco/opencode-pty/443945a666cad3b0c00da0c1c9f2bcd5bc00e28a";
-      flake = false;
-    };
     ghostty-src = {
       url = "github:ghostty-org/ghostty/ab0b9da9e88fcb4b0533a1854e84628f663930af";
       flake = false;
@@ -73,7 +69,7 @@
 
     # MCP servers fixed package set & vendor upstreams
     mcp-nixpkgs = {
-      url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
+      url = "github:NixOS/nixpkgs/885ba4d038f10c3d17d7a92e8c3cc185b99c9158";
       flake = false;
     };
     oh-my-opencode-slim-src = {
@@ -86,7 +82,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, opencode, pty-src, ghostty-src, ... }@inputs:
+  outputs = { self, nixpkgs, opencode, ghostty-src, ... }@inputs:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -122,7 +118,7 @@
           inherit (inputs) oh-my-opencode-slim-src billion-context-src;
         };
         mcpNixpkgs = inputs.mcp-nixpkgs;
-        nativePty = pkgs.callPackage ./kernel/nix/pty-daemon.nix { inherit pty-src ghostty-src; };
+        nativePty = pkgs.callPackage ./kernel/nix/pty-daemon.nix { inherit opencode ghostty-src; };
         inherit (pkgs) lib;
       };
       trial = pkgs.writeShellApplication {
@@ -137,7 +133,7 @@
         default = package;
         kernel = package;
         opencode = package;
-        pty-daemon = pkgs.callPackage ./kernel/nix/pty-daemon.nix { inherit pty-src ghostty-src; };
+        pty-daemon = pkgs.callPackage ./kernel/nix/pty-daemon.nix { inherit opencode ghostty-src; };
       };
       apps.${system}.default = {
         type = "app";

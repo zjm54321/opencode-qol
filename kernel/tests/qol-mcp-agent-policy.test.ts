@@ -83,7 +83,7 @@ async function setup(options: {
   const nativeSubagent = { description: "Native subagent", execute: async () => ({}) };
   const stored = new Map<string, unknown>();
   const ctx = {
-    app: { name: "opencode", version: "2.1.4" }, options: {},
+    app: { name: "opencode", version: "2.2.5" }, options: {},
     location: { directory, project: { id: "policy-project", directory, canonical: directory } },
     storage: {
       get: async (key: string) => structuredClone(stored.get(key)),

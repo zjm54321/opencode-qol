@@ -7,8 +7,8 @@
 # 【改动内容】
 # 1. 纯展示层版本标识：在 packages/util/src/qol-version.ts 中实现通用工具函数 qolVersion 与 qolVersionLabel。
 # 2. 在 CLI --version、TUI 底部 Footer、启动闪屏 Splash 及 Debug 对话框中，仅对展示文本追加 -qol
-#    后缀（如 v2.1.4-qol），使使用者清晰感知 QoL 增强状态。
-# 3. 严格保持底层核心变量 OPENCODE_VERSION（2.1.4）为原版数字，不破坏数据库迁移与服务通信。
+#    后缀（如 v2.2.5-qol），使使用者清晰感知 QoL 增强状态。
+# 3. 严格保持底层核心变量 OPENCODE_VERSION（2.2.5）为原版数字，不破坏数据库迁移与服务通信。
 # 4. 彻底剥离任何 Logo 篡改，终端首页与全系统的 ASCII Logo 100% 保持官方原生字符艺术排版。
 #
 # 【存在理由】

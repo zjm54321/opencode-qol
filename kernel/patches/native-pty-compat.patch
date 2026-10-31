@@ -21,7 +21,7 @@
 # 真正的工具生命周期保留能力和零异常的终端操作。
 # ==============================================================================
 diff --git a/packages/core/src/persistent-pty/daemon.ts b/packages/core/src/persistent-pty/daemon.ts
-index 21bcaab..5fe07a2 100644
+index 50d2284..b9ad390 100644
 --- a/packages/core/src/persistent-pty/daemon.ts
 +++ b/packages/core/src/persistent-pty/daemon.ts
 @@ -6,7 +6,7 @@ import { Cause, Data, Duration, Effect, Schema, Semaphore } from "effect"
@@ -46,7 +46,7 @@ index 21bcaab..5fe07a2 100644
    id: Schema.Number,
    pid: Schema.NullOr(Schema.Number),
    title: Schema.String,
-@@ -41,6 +47,14 @@ const Registration = Schema.Struct({
+@@ -43,6 +49,14 @@ const Registration = Schema.Struct({
  type Registration = typeof Registration.Type
  
  export const WireResponse = Schema.Union([
@@ -62,27 +62,27 @@ index 21bcaab..5fe07a2 100644
      type: Schema.Literal("pong"),
      instance_id: Schema.String,
 diff --git a/packages/core/src/persistent-pty/index.ts b/packages/core/src/persistent-pty/index.ts
-index 780880f..73a61d6 100644
+index 22f3881..a638f18 100644
 --- a/packages/core/src/persistent-pty/index.ts
 +++ b/packages/core/src/persistent-pty/index.ts
-@@ -70,6 +70,7 @@ export interface Interface {
+@@ -89,6 +89,7 @@ export interface Interface {
        readonly env: Readonly<Record<string, string>>
        readonly cols?: number
        readonly rows?: number
 +      readonly tool?: Readonly<Record<string, unknown>>
      },
-   ) => Effect.Effect<Info, UnavailableError>
+   ) => Effect.Effect<Info, InvalidCwdError | UnavailableError>
    readonly write: (
-@@ -97,6 +98,8 @@ export interface Interface {
-     data: Uint8Array,
-   ) => Effect.Effect<void, NotFoundError | UnavailableError>
+@@ -120,6 +121,8 @@ export interface Interface {
+     title: string | null,
+   ) => Effect.Effect<Info, NotFoundError | UnsupportedError | UnavailableError>
    readonly snapshot: (id: Pty.ID) => Effect.Effect<Snapshot, NotFoundError | UnavailableError>
 +  readonly replay: (id: Pty.ID, byteOffset?: number) => Effect.Effect<Attachment["replay"], NotFoundError | UnavailableError>
 +  readonly stop: (id: Pty.ID) => Effect.Effect<void, NotFoundError | UnavailableError>
    readonly read: (sessionID: Session.ID, lines?: number) => Effect.Effect<ReadResult | null, UnavailableError>
    readonly remove: (id: Pty.ID) => Effect.Effect<void, NotFoundError | UnavailableError>
    readonly shutdown: () => Effect.Effect<void, UnavailableError>
-@@ -170,6 +173,7 @@ const makeLayer = (options: Options = {}) =>
+@@ -202,6 +205,7 @@ const makeLayer = (options: Options = {}) =>
              env: input.env,
              cols: input.cols ?? 80,
              rows: input.rows ?? 24,
@@ -90,8 +90,8 @@ index 780880f..73a61d6 100644
            },
            true,
          )
-@@ -250,6 +254,25 @@ const makeLayer = (options: Options = {}) =>
-         return undefined
+@@ -294,6 +298,25 @@ const makeLayer = (options: Options = {}) =>
+         return renamed
        })
  
 +      const replay = Effect.fn("PersistentPty.replay")(function* (id: Pty.ID, byteOffset = 0) {
@@ -116,7 +116,7 @@ index 780880f..73a61d6 100644
        const snapshot = Effect.fn("PersistentPty.snapshot")(function* (id: Pty.ID) {
          yield* get(id)
          const response = yield* request(daemon, { op: "snapshot", id: fromID(id) })
-@@ -327,12 +350,12 @@ const makeLayer = (options: Options = {}) =>
+@@ -403,12 +426,12 @@ const makeLayer = (options: Options = {}) =>
          id: Pty.ID,
          input: Parameters<Interface["attach"]>[1],
        ) {
@@ -131,16 +131,16 @@ index 780880f..73a61d6 100644
                input.onEvent(event)
              },
            })
-@@ -357,6 +380,8 @@ const makeLayer = (options: Options = {}) =>
-         control,
+@@ -434,6 +457,8 @@ const makeLayer = (options: Options = {}) =>
          input,
+         rename,
          snapshot,
 +        replay,
 +        stop,
          read,
          remove,
          shutdown,
-@@ -401,6 +426,12 @@ function toInfo(value: WireTerminal): Info {
+@@ -478,6 +503,12 @@ function toInfo(value: WireTerminal): Info {
        ...(status === "exited" ? { exitCode: value.lifecycle.exit_code ?? undefined } : {}),
      }),
      sessionID: value.group_id,
@@ -150,11 +150,11 @@ index 780880f..73a61d6 100644
 +    killed: value.killed,
 +    timedOut: value.timed_out,
 +    ...(value.termination_error ? { terminationError: value.termination_error } : {}),
+     userTitle: value.user_title ?? null,
      foregroundProcess: value.foreground_process,
      size: { cols: value.cols, rows: value.rows },
-     output: { head: value.output_head, tail: value.output_tail },
 diff --git a/packages/schema/src/persistent-pty.ts b/packages/schema/src/persistent-pty.ts
-index cef23f5..326a186 100644
+index c75586b..77e0353 100644
 --- a/packages/schema/src/persistent-pty.ts
 +++ b/packages/schema/src/persistent-pty.ts
 @@ -8,6 +8,12 @@ import { Session } from "./session.js"
@@ -168,5 +168,5 @@ index cef23f5..326a186 100644
 +  timedOut: Schema.optionalKey(Schema.UndefinedOr(Schema.NullOr(Schema.Boolean))),
 +  terminationError: Schema.optionalKey(Schema.UndefinedOr(Schema.NullOr(Schema.String))),
    sessionID: Session.ID,
+   userTitle: Schema.NullOr(Schema.String),
    foregroundProcess: Schema.NullOr(Schema.String),
-   size: Schema.Struct({ cols: PositiveInt, rows: PositiveInt }),

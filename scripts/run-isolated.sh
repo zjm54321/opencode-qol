@@ -30,7 +30,7 @@ if [ $# -gt 0 ]; then
 fi
 
 echo "=================================================="
-echo " 正在以【独立隔离模式】启动 OpenCode v2.1.4-qol"
+echo " 正在以【独立隔离模式】启动 OpenCode v2.2.5-qol"
 echo " 配置文件: $CONFIG_DIR/opencode/opencode.json"
 echo " 数据目录: $DATA_DIR (独立临时目录，避免快照递归膨胀)"
 echo " 服务模式: 独立本地进程 (--standalone)"

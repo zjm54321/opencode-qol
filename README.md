@@ -1,6 +1,6 @@
 # OpenCode QoL
 
-OpenCode Quality of Life (QoL) 是一款面向生产环境的 OpenCode 完整工程化整合包（Monorepo）。它将固定版本的 OpenCode 核心 (v2.1.4)、原生 Persistent PTY、内置工程级插件群、生态增强套件（Oh My OpenCode Slim、Billion Context ACP）以及精选的专业技能库（Built-in Skills）由 Nix 统一构建进单一确定性闭包，免除任何运行时 npm/bun 安装或外部网络下载。当前面向 `x86_64-linux`。
+OpenCode Quality of Life (QoL) 是一款面向生产环境的 OpenCode 完整工程化整合包（Monorepo）。它将固定版本的 OpenCode 核心 (v2.2.5)、原生 Persistent PTY、内置工程级插件群、生态增强套件（Oh My OpenCode Slim、Billion Context ACP）以及精选的专业技能库（Built-in Skills）由 Nix 统一构建进单一确定性闭包，免除任何运行时 npm/bun 安装或外部网络下载。当前面向 `x86_64-linux`。
 
 ---
 
@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/zjm54321/opencode-qol/main/scripts/
 ```sh
 nix build
 bun test
-bash scripts/install.sh --version v2.1.4-qol
+bash scripts/install.sh --version v2.2.5-qol
 # 离线 Linux 安装：
 bash scripts/install.sh --archive ./opencode-linux-x64.tar.gz
 ```
@@ -152,10 +152,10 @@ programs.opencode-qol = {
 
 ## 架构与范围说明
 
-- **Monorepo 内置闭包**：自有内置插件（`clear-encrypted`, `session-reader`, `opencode-image`, `opencode-desktop-bridge`）在 `kernel/plugins/` 本地维护并归属 QoL 项目；`oh-my-opencode-slim@3.0.6` 与 `billion-context@0.1.206` 构建期统一锁定并收录到产物的 `vendor/`，无运行时 npm 安装。
+- **Monorepo 内置闭包**：自有内置插件（`clear-encrypted`, `session-reader`, `opencode-image`, `opencode-desktop-bridge`）在 `kernel/plugins/` 本地维护并归属 QoL 项目；`oh-my-opencode-slim@3.0.6` 与 `billion-context@0.1.210` 构建期统一锁定并收录到产物的 `vendor/`，无运行时 npm 安装。
 - **官方 PTY 归一**：`kernel/src/native-pty.ts` 复用 `PersistentPty.Service` 与原生终端面板；`pty_read` 读取守护进程保留的最近 2 MiB 输出，支持分页和正则检索，不另建日志存储。工具终端退出后保留输出，清理或守护进程结束后释放；退出通知使用原生 synthetic 消息。
 - **桌面桥接边界**：仅提供 `opencode-desktop-bridge` 插件包并采用新 RPC 标识，不保留旧名称兼容，不包含 Windows 原生前端程序。
-- **随包 MCP**：Codegraph `1.6.2` 与 NixOS MCP `3.0.1` 的 stdio 服务程序随 Nix 闭包提供，内置插件自动注册；显式同名配置优先。Codegraph 索引由使用者创建，启动不自动索引项目。Context7 与 GitHub grep 沿用 Slim 的远程 MCP 定义。
+- **随包 MCP**：Codegraph `1.6.2` 与 NixOS MCP `3.0.2` 的 stdio 服务程序随 Nix 闭包提供，内置插件自动注册；显式同名配置优先。Codegraph 索引由使用者创建，启动不自动索引项目。Context7 与 GitHub grep 沿用 Slim 的远程 MCP 定义。
 - **QoL 标识**：首页显示小号 `qol`；版本展示动态追加 `-qol`，不改变上游版本、更新通道或状态目录。Sunburst 生成字标位于 `assets/branding/`，随包安装到 `share/opencode-qol/branding/`。
 - **构建与验证**：当前未配置发布缓存，无缓存时由 Nix 本地构建。107 项源码与契约测试已通过，包含真实 PTY 守护进程与核心协议测试。整包验收还检查 CLI 版本、宿主插件注册及本地 MCP 连接；具体结果以交付时的构建与运行记录为准。本仓库不会自动部署到现用系统。
 

@@ -70,30 +70,46 @@ export interface SessionMessagesOptions {
   type?: string;
 }
 
-export interface ServiceConfig { port: number; password: string }
+export interface ServiceRegistration { url: string; password?: string }
 
-export async function readServiceConfig(configDirectory = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode")): Promise<ServiceConfig> {
-  for (const filename of ["service-prod.json", "service.json"]) {
-    const path = join(configDirectory, filename);
-    let text: string;
-    try {
-      text = await readFile(path, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw new Error(`Cannot read OpenCode service configuration at ${path}.`);
+/** The CLI's channel-specific registration lives in state, not its saved configuration. */
+export async function readServiceRegistration(
+  stateDirectory = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "opencode"),
+  channel = "latest",
+): Promise<ServiceRegistration> {
+  const filename = ["latest", "dev", "beta", "next"].includes(channel)
+    ? "service.json"
+    : `service-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.json`;
+  const path = join(stateDirectory, filename);
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`OpenCode service registration not found at ${path}. Start the OpenCode background service first.`);
     }
-    let config: Partial<ServiceConfig> | null;
-    try {
-      config = JSON.parse(text);
-    } catch {
-      throw new Error(`Invalid JSON in OpenCode service configuration at ${path}.`);
-    }
-    if (!config || !Number.isInteger(config.port) || config.port! < 1 || config.port! > 65535 || typeof config.password !== "string") {
-      throw new Error(`Invalid OpenCode service configuration at ${path}: expected port (1–65535) and password (string).`);
-    }
-    return { port: config.port!, password: config.password };
+    throw new Error(`Cannot read OpenCode service registration at ${path}.`);
   }
-  throw new Error(`OpenCode service configuration not found in ${configDirectory} (service-prod.json or service.json). Start the OpenCode background service first.`);
+  let registration: Record<string, unknown> | null;
+  try {
+    registration = JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid JSON in OpenCode service registration at ${path}.`);
+  }
+  if (!registration || typeof registration.url !== "string" || !Number.isInteger(registration.pid) || Number(registration.pid) <= 0
+    || (registration.password !== undefined && typeof registration.password !== "string")
+    || (registration.id !== undefined && typeof registration.id !== "string")
+    || (registration.version !== undefined && typeof registration.version !== "string")) {
+    throw new Error(`Invalid OpenCode service registration at ${path}: expected url, positive pid and optional string credentials.`);
+  }
+  let url: URL;
+  try {
+    url = new URL(registration.url);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error();
+  } catch {
+    throw new Error(`Invalid OpenCode service URL in registration at ${path}: expected an HTTP(S) URL without embedded credentials.`);
+  }
+  return { url: url.href, password: registration.password as string | undefined };
 }
 
 /** Omits only absent values; URLSearchParams safely encodes paths, searches and cursors. */
@@ -102,7 +118,8 @@ export function formatOptions(options: Record<string, string | number | undefine
 }
 
 export interface ClientOptions {
-  configDirectory?: string;
+  stateDirectory?: string;
+  channel?: string;
   timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
 }
@@ -145,24 +162,25 @@ export class OpenCodeClient {
 
   private async get<T>(path: string, query: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted();
-    // Reload on each request so a restarted service's port/password is picked up.
-    const config = await readServiceConfig(this.options.configDirectory);
-    const url = new URL(path, `http://127.0.0.1:${config.port}`);
+    // Reload on each request so a restarted service's URL/password is picked up.
+    const registration = await readServiceRegistration(this.options.stateDirectory, this.options.channel);
+    const url = new URL(path, registration.url);
     url.search = formatOptions(query).toString();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const authorization = registration.password === undefined ? undefined : Buffer.from(`opencode:${registration.password}`).toString("base64");
     const redact = (value: string) => {
-      const authorization = Buffer.from(`opencode:${config.password}`).toString("base64");
+      if (authorization === undefined) return value;
       const clean = value.replaceAll(authorization, "[redacted]");
-      return config.password ? clean.replaceAll(config.password, "[redacted]") : clean;
+      return registration.password ? clean.replaceAll(registration.password, "[redacted]") : clean;
     };
     try {
       const response = await this.fetcher(url, {
         method: "GET",
         headers: {
           Accept: "application/json",
-          Authorization: `Basic ${Buffer.from(`opencode:${config.password}`).toString("base64")}`,
+          ...(authorization === undefined ? {} : { Authorization: `Basic ${authorization}` }),
         },
         signal: requestSignal,
         redirect: "error",

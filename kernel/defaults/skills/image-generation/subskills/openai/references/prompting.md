@@ -1,6 +1,6 @@
 # Prompting best practices
 
-Adapted from OpenAI's imagegen skill for the direct built-in `image_gen` tool. This file covers prompt structure, specificity and iteration, not shell execution.
+Adapted from OpenAI's imagegen skill for OpenCode's native `experimental_image_generate` tool. This file covers prompt structure, specificity and iteration, not execution setup.
 
 ## Contents
 - [Structure](#structure)
@@ -65,8 +65,8 @@ Do not add:
 - Prefer one targeted follow-up at a time over rewriting the whole prompt.
 
 ## Tool controls
-- Use the tool schema for supported `quality`, `aspect_ratio` and `transparent_background` parameters.
-- Explicit masks, `input_fidelity`, output format and output paths are not tool arguments; describe edits in the prompt. Do not use a shell workaround.
+- Native tool inputs are `prompt`, `images`, `model` and `path`. Exact quality, aspect ratio, transparency and encoding controls belong in model settings or configured variants.
+- Explicit masks and input-fidelity controls are not native tool arguments; describe the requested edit and invariants in the prompt. Use `path` for an output destination. Do not use a shell workaround.
 
 ## Use-case tips
 Generate:

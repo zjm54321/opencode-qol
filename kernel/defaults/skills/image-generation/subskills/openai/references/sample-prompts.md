@@ -1,6 +1,6 @@
 # Sample prompts (copy/paste)
 
-Adapted from OpenAI's imagegen skill for the direct built-in `image_gen` tool.
+Adapted from OpenAI's imagegen skill for OpenCode's native `experimental_image_generate` tool. Examples describe prompts, not additional tool arguments.
 
 Use these as starting points. They are intentionally complete prompt recipes, not the default amount of augmentation to add to every user request.
 
@@ -11,7 +11,7 @@ When adapting a user's prompt:
 
 The labeled lines are prompt scaffolding, not a closed schema. `Asset type` and `Input images` are prompt-only scaffolding, not dedicated tool arguments.
 
-Use the tool schema for supported execution parameters. There is no shell/SDK fallback; explicit masks, `input_fidelity`, output formats and output paths are not tool arguments.
+Use the native schema: `prompt`, `images`, `model` and `path`. Exact output controls belong in configured model settings/variants; explicit masks and input-fidelity controls are not native tool arguments. There is no shell/SDK fallback.
 
 For prompting principles (structure, specificity, invariants, iteration), see `references/prompting.md`.
 

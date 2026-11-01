@@ -22,7 +22,7 @@ diff --git a/packages/tui/src/feature-plugins/system/plugins.tsx b/packages/tui/
 index f7f2982..eb6befa 100644
 --- a/packages/tui/src/feature-plugins/system/plugins.tsx
 +++ b/packages/tui/src/feature-plugins/system/plugins.tsx
-@@ -10,6 +10,22 @@ import { useDialog } from "../../ui/dialog"
+@@ -10,6 +10,21 @@ import { useDialog } from "../../ui/dialog"
  import { errorMessage } from "../../util/error"
  
  const id = "opencode.plugins"
@@ -34,7 +34,6 @@ index f7f2982..eb6befa 100644
 +  "billion-context-opencode-native",
 +  "opencode-qol",
 +  "opencode.qol.native-pty",
-+  "opencode.qol.image",
 +  "opencode.qol.session-reader",
 +  "opencode.qol.clear-encrypted-contents",
 +  "opencode.qol.gpt-taste",
@@ -45,7 +44,7 @@ index f7f2982..eb6befa 100644
  
  type Entry =
    | { readonly key: string; readonly runtime: "server"; readonly internal: boolean; readonly plugin: PluginInfo }
-@@ -48,7 +64,7 @@ export function PluginsDialog(props: { context: Plugin.Context; plugins: ReturnT
+@@ -48,7 +63,7 @@ export function PluginsDialog(props: { context: Plugin.Context; plugins: ReturnT
        .map((plugin) => ({
          key: `tui:${plugin.id}`,
          runtime: "tui" as const,
@@ -54,7 +53,7 @@ index f7f2982..eb6befa 100644
          id: plugin.id,
          target: plugin.id,
          status: plugin.active ? ("active" as const) : ("inactive" as const),
-@@ -71,7 +87,7 @@ export function PluginsDialog(props: { context: Plugin.Context; plugins: ReturnT
+@@ -71,7 +86,7 @@ export function PluginsDialog(props: { context: Plugin.Context; plugins: ReturnT
        .map((plugin) => ({
          key: `server:${plugin.id ?? source(plugin, props.context)}`,
          runtime: "server" as const,
@@ -75,23 +74,21 @@ index e911aef..78f4d12 100644
  import { isRecord } from "../util/record"
  import { parseTodos, todoMarker } from "../util/todo"
  import type { RunEntryBody, StreamCommit, ToolSnapshot } from "./types"
-@@ -128,6 +129,11 @@ type ToolName =
+@@ -128,6 +129,9 @@ type ToolName =
    | "webfetch"
    | "websearch"
    | "skill"
-+  | "image_gen"
-+  | "image_gen_nano"
 +  | "session_list"
 +  | "session_read"
 +  | "session_diff"
  
  type ToolRule = {
    view: ToolView
-@@ -853,6 +859,60 @@ function scrollLspStart(p: ToolProps): string {
+@@ -853,6 +857,58 @@ function scrollLspStart(p: ToolProps): string {
    return `→ ${lspTitle(p.input, { directory: p.frame.directory })}`
  }
  
-+// OpenCode QoL: image and session-reader summaries shared with the session view.
++// OpenCode QoL: session-reader summaries shared with the session view.
 +function qolSummary(p: ToolProps) {
 +  return qolToolSummary({
 +    tool: p.frame.name,
@@ -103,9 +100,7 @@ index e911aef..78f4d12 100644
 +}
 +
 +function qolLines(p: ToolProps) {
-+  return (qolSummary(p)?.lines ?? []).map((line) =>
-+    line.startsWith("↳ Saved ") ? `↳ Saved ${displayPath(p, line.slice("↳ Saved ".length))}` : line,
-+  )
++  return qolSummary(p)?.lines ?? []
 +}
 +
 +function runQol(p: ToolProps): ToolInline {
@@ -148,12 +143,10 @@ index e911aef..78f4d12 100644
  function scrollSkillStart(p: ToolProps): string {
    return `→ Skill "${p.metadata.name ?? p.input.id ?? ""}"`
  }
-@@ -1100,6 +1160,11 @@ const TOOL_RULES = {
+@@ -1100,6 +1156,9 @@ const TOOL_RULES = {
        start: scrollSkillStart,
      },
    },
-+  image_gen: QOL_RULE,
-+  image_gen_nano: QOL_RULE,
 +  session_list: QOL_RULE,
 +  session_read: QOL_RULE,
 +  session_diff: QOL_RULE,
@@ -168,7 +161,7 @@ index ce5d3cb..f7e4b16 100644
  import { collapseShellOutput, collapseToolOutput } from "../../util/collapse-tool-output"
  import { Keymap, type KeymapCommand } from "../../context/keymap"
  import { usePathFormatter } from "../../context/path-format"
-+import { QOL_IMAGE_TOOLS, QOL_SESSION_TOOLS, qolToolSummary } from "../../util/qol-tool-display"
++import { QOL_SESSION_TOOLS, qolToolSummary } from "../../util/qol-tool-display"
  import { useLocation } from "../../context/location"
  import { Slot } from "../../plugin/render"
  import { usePlugin } from "../../plugin/context"
@@ -176,21 +169,19 @@ index ce5d3cb..f7e4b16 100644
        <Match when={display() === "skill"}>
          <Skill {...toolprops} />
        </Match>
-+      <Match when={QOL_IMAGE_TOOLS.includes(display()) || QOL_SESSION_TOOLS.includes(display())}>
++      <Match when={QOL_SESSION_TOOLS.includes(display())}>
 +        <QolTool {...toolprops} />
 +      </Match>
        <Match when={true}>
          <GenericTool {...toolprops} />
        </Match>
-@@ -3248,6 +3252,69 @@ function WebFetch(props: ToolProps) {
+@@ -3248,6 +3252,49 @@ function WebFetch(props: ToolProps) {
    )
  }
  
-+// OpenCode QoL: dedicated rows for the built-in image and session-reader tools.
++// OpenCode QoL: dedicated rows for the built-in session-reader tools.
 +function QolTool(props: ToolProps) {
 +  const theme = useTheme()
-+  const pathFormatter = usePathFormatter()
-+  const [expanded, setExpanded] = createSignal(false)
 +  const summary = createMemo(() =>
 +    qolToolSummary({
 +      tool: props.tool,
@@ -200,12 +191,7 @@ index ce5d3cb..f7e4b16 100644
 +      output: props.output,
 +    }),
 +  )
-+  const prompt = createMemo(() => stringValue(props.input.prompt))
-+  const lines = createMemo(() =>
-+    (summary()?.lines ?? []).map((line) =>
-+      line.startsWith("↳ Saved ") ? `↳ Saved ${pathFormatter.format(line.slice("↳ Saved ".length))}` : line,
-+    ),
-+  )
++  const lines = createMemo(() => summary()?.lines ?? [])
 +  return (
 +    <>
 +      <InlineTool
@@ -215,7 +201,6 @@ index ce5d3cb..f7e4b16 100644
 +        pending={summary()?.title ?? props.tool}
 +        complete={true}
 +        part={props.part}
-+        onClick={prompt() ? () => setExpanded((value) => !value) : undefined}
 +      >
 +        {summary()?.title ?? props.tool}
 +      </InlineTool>
@@ -233,18 +218,6 @@ index ce5d3cb..f7e4b16 100644
 +          </box>
 +        )}
 +      </For>
-+      <Show when={expanded() && prompt()}>
-+        {(value) => (
-+          <box paddingLeft={3 + INLINE_TOOL_ICON_WIDTH} flexDirection="row">
-+            <text flexShrink={0} fg={theme.text.muted}>
-+              prompt:{" "}
-+            </text>
-+            <text flexGrow={1} wrapMode="word" fg={theme.text.base}>
-+              {value()}
-+            </text>
-+          </box>
-+        )}
-+      </Show>
 +    </>
 +  )
 +}
@@ -277,31 +250,26 @@ new file mode 100644
 index 0000000..ed533aa
 --- /dev/null
 +++ b/packages/tui/src/util/qol-tool-display.ts
-@@ -0,0 +1,256 @@
-+// OpenCode QoL: display summaries for the built-in image and session-reader tools.
+@@ -0,0 +1,175 @@
++// OpenCode QoL: display summaries for the built-in session-reader tools.
 +// Pure helpers shared by the session view and `opencode run`; keep this file free of imports.
 +
-+export const QOL_IMAGE_TOOLS: readonly string[] = ["image_gen", "image_gen_nano"]
 +export const QOL_SESSION_TOOLS: readonly string[] = ["session_list", "session_read", "session_diff"]
-+export const QOL_TOOL_DISPLAYS: readonly string[] = [...QOL_IMAGE_TOOLS, ...QOL_SESSION_TOOLS]
++export const QOL_TOOL_DISPLAYS: readonly string[] = QOL_SESSION_TOOLS
 +
-+export const QOL_IMAGE_ICON = "▣"
 +export const QOL_READ_ICON = "→"
 +export const QOL_SEARCH_ICON = "✱"
 +
 +const TITLE_WIDTH = 40
-+const MODEL_WIDTH = 32
 +const QUERY_WIDTH = 32
-+const ERROR_WIDTH = 120
-+const SAVED_LINES = 2
 +
 +export type QolToolSummary = {
 +  icon: string
 +  /** Main row text: spinner label while running, final summary afterwards. */
 +  title: string
-+  /** Supplementary rows, already prefixed with "↳ ". Paths stay raw so callers can format them. */
++  /** Supplementary rows, already prefixed with "↳ ". */
 +  lines: string[]
-+  /** The tool returned an error payload as normal content (legacy image results). */
++  /** The summary requests tool-error presentation. */
 +  failed: boolean
 +  running: boolean
 +}
@@ -366,80 +334,6 @@ index 0000000..ed533aa
 +
 +function settledStatus(status: string) {
 +  return status !== "streaming" && status !== "running"
-+}
-+
-+/** Legacy image results return `{"status":"error",...}` as normal content. */
-+function imageErrorPayload(output: string) {
-+  const text = output.trim()
-+  if (!text.startsWith("{")) return
-+  try {
-+    const value = record(JSON.parse(text))
-+    if (value.status !== "error") return
-+    return { code: str(value.error_code), message: str(value.message) }
-+  } catch {
-+    return
-+  }
-+}
-+
-+function markdownImages(output: string) {
-+  return Array.from(output.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g), (match) => match[1])
-+}
-+
-+function savedLines(paths: readonly string[]) {
-+  const lines = paths.slice(0, SAVED_LINES).map((file) => `↳ Saved ${file}`)
-+  if (paths.length > SAVED_LINES) lines.push(`↳ +${paths.length - SAVED_LINES} more`)
-+  return lines
-+}
-+
-+export function qolImageSummary(input: {
-+  tool: string
-+  status: string
-+  input: Dict
-+  metadata: Dict
-+  output?: string
-+}): QolToolSummary {
-+  const metadata = record(input.metadata)
-+  const args = record(input.input)
-+  const references = Array.isArray(args.referenced_image_paths) ? args.referenced_image_paths.length : 0
-+  const recent = count(args.num_last_images_to_include) ?? 0
-+  // The OpenAI tool switches to its edit endpoint with references; Nano Banana uses them for continuity.
-+  const editing =
-+    typeof metadata.edited === "boolean"
-+      ? metadata.edited
-+      : input.tool === "image_gen" && references + recent > 0
-+  const model = str(metadata.model) ?? str(args.model)
-+  const aspect = str(metadata.aspect_ratio) ?? str(args.aspect_ratio)
-+  const modelLabel = model ? clipText(model, MODEL_WIDTH) : undefined
-+  const base = { icon: QOL_IMAGE_ICON, lines: [] as string[], failed: false, running: false }
-+
-+  if (!settledStatus(input.status))
-+    return { ...base, running: true, title: joined([`${editing ? "Editing" : "Generating"} image…`, modelLabel]) }
-+
-+  if (input.status === "error") return { ...base, title: joined([`Image ${editing ? "edit" : "generation"} failed`, modelLabel]) }
-+
-+  const output = input.output ?? ""
-+  const payload = imageErrorPayload(output)
-+  if (payload)
-+    return {
-+      ...base,
-+      failed: true,
-+      title: joined([`Image ${editing ? "edit" : "generation"} failed`, payload.code]),
-+      lines: payload.message ? [`↳ ${clipText(payload.message, ERROR_WIDTH)}`] : [],
-+    }
-+
-+  const legacy = markdownImages(output)
-+  const files = Array.isArray(metadata.files)
-+    ? metadata.files.filter((file): file is string => typeof file === "string" && file.length > 0)
-+    : legacy
-+  // Only report a count the tool actually returned: metadata first, then real markdown image links.
-+  const total = count(metadata.count) ?? (legacy.length > 0 ? legacy.length : undefined)
-+  if (total === undefined) return { ...base, title: joined(["Image request finished", modelLabel]) }
-+  if (total === 0) return { ...base, title: joined(["No image returned", modelLabel]) }
-+  return {
-+    ...base,
-+    title: joined([`${editing ? "Edited" : "Generated"} ${plural(total, "image")}`, modelLabel, aspect]),
-+    lines: savedLines(files),
-+  }
 +}
 +
 +function sessionLabel(metadata: Dict, args: Dict, output: string) {
@@ -521,14 +415,12 @@ index 0000000..ed533aa
 +  metadata: Dict
 +  output?: string
 +}): QolToolSummary | undefined {
-+  if (QOL_IMAGE_TOOLS.includes(input.tool)) return qolImageSummary(input)
 +  if (QOL_SESSION_TOOLS.includes(input.tool)) return qolSessionSummary(input)
 +  return undefined
 +}
 +
 +/** Neutral subject for callers that add their own outcome wording, such as "… failed". */
 +export function qolToolSubject(tool: string) {
-+  if (QOL_IMAGE_TOOLS.includes(tool)) return "Image generation"
 +  if (tool === "session_list") return "Session list"
 +  if (tool === "session_diff") return "Session diff"
 +  if (tool === "session_read") return "Session read"

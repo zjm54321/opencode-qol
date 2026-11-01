@@ -1,6 +1,0 @@
-interface:
-  display_name: "Image Gen"
-  short_description: "Generate or edit images for websites, games, and more"
-  icon_small: "./assets/imagegen-small.svg"
-  icon_large: "./assets/imagegen.png"
-  default_prompt: "Adapted for OpenCode: generate or edit raster assets with the direct built-in `image_gen` tool, never execute, a CLI or an SDK runner. Prefer existing SVG/vector/code-native assets when the task is to extend those. Label reference roles, preserve edit invariants, and issue one authorized tool call per requested asset. Use only parameters exposed by the tool schema. Report actual saved workspace paths or the actionable tool failure."

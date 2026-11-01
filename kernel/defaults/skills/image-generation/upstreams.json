@@ -3,8 +3,8 @@
     "repository": "https://github.com/openai/skills.git",
     "directory": "skills/.system/imagegen",
     "commit": "e6afb0d74cc75d220df2faf3dd6c635c2dc6a108",
-    "adaptation": "Adapted for compiled-in direct image_gen. Standalone CLI script and CLI/network recipes removed; skills and prompting/API references edited. original_files records upstream source hashes, not current bundled file checksums.",
-    "verification": "All 11 original_files SHA-256 hashes recomputed from this commit match 49f948faa9258a0c61caceaf225e179651397431 byte-for-byte; both revisions use skills/.system/imagegen. No model, API, prompting or example changes to merge; local direct-tool adaptations remain in place.",
+    "adaptation": "Adapted as prompting references for OpenCode native experimental_image_generate. Standalone CLI scripts and CLI/network recipes removed; skills and API guidance follow native model discovery, settings/variants, explicit image references and asynchronous completion. original_files records upstream source hashes, not current bundled file checksums.",
+    "verification": "Historical source verification: all 11 original_files SHA-256 hashes recomputed from this commit match 49f948faa9258a0c61caceaf225e179651397431 byte-for-byte; both revisions use skills/.system/imagegen. Local native-tool adaptations are separate from these original source hashes.",
     "original_files": {
       "agents/openai.yaml": "fafccbf7ded0d78be24c7dc1c0a2e0ac1bbf27bfd13a1fed969da643d973826a",
       "assets/imagegen-small.svg": "cff5f34f57ff60b3ee92eaedd17b15e96dd4b9e776df3e78936c9e00d42be294",
@@ -23,8 +23,8 @@
     "repository": "https://github.com/AntonioCardenas/generate-nanobanana.git",
     "directory": ".",
     "commit": "725d003705b432a9ee8ffeb209a48aeb149c019b",
-    "adaptation": "Adapted for compiled-in direct image_gen_nano. Standalone package, install/update instructions, Python/Interactions API and video execution removed; model guidance retained and adapted. original_files records upstream source hashes, not current bundled file checksums.",
-    "verification": "Upstream main resolved to this same commit on 2026-10-25. All 14 original_files SHA-256 hashes recomputed and matched; retained model, reference-continuity and failure guidance reviewed against this pin. No newer upstream technical changes to merge; local direct-tool adaptations remain in place.",
+    "adaptation": "Adapted as image prompting references for OpenCode native experimental_image_generate. Standalone package, install/update instructions, Python/Interactions API and video execution removed; references use native model settings/variants and explicit images instead of plugin continuity. original_files records upstream source hashes, not current bundled file checksums.",
+    "verification": "Historical source verification: upstream main resolved to this commit on 2026-10-25 and all 14 original_files SHA-256 hashes recomputed and matched. Local native-tool adaptations are separate from these original source hashes.",
     "original_files": {
       ".gitignore": "cf237c7aff44efbe6e502e645c3e06da03a69d7bdeb43392108ef3348143417e",
       "CODE_OF_CONDUCT.md": "8b3dc743993f08c0208280eaade0f94bab16e18274e5c5b47f61441581549d76",

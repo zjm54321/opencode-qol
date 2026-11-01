@@ -5,7 +5,6 @@ import type { Plugin as PromisePlugin } from "@opencode/plugin/promise/plugin"
 import { fromPromise } from "@opencode/plugin/promise/adapter"
 import omo from "./vendor/oh-my-opencode-slim/dist/server/index.js"
 import billion from "./vendor/billion-context/dist/agent/opencode-native.js"
-import image from "./plugins/image/src/index.ts"
 import sessionReader from "./plugins/session-reader/src/index.ts"
 import clearEncrypted from "./plugins/clear-encrypted/src/index.ts"
 import gptTaste from "./plugins/gpt-taste/index.js"
@@ -26,7 +25,6 @@ export const QolPlugins: readonly EffectPlugin[] = [
   bundledMcp,
   omo,
   billion,
-  image,
   sessionReader,
   clearEncrypted,
   gptTaste,

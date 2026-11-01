@@ -51,16 +51,16 @@
 
 ## 3. 内置功能引用的外部材料
 
-位于 `plugins/` 内的自有内置插件本身属于本项目，但其中引入、摘录或适配了以下独立的外部第三方开源材料，原样保留其原始版权声明与许可文件：
+自有内置插件与技能中引入、摘录或适配了以下独立的外部第三方开源材料，保留其原始版权声明与许可文件。图像技能独立于 OpenCode 原生图像执行工具：
 
 ### 3.1 Google Nano Banana 图像生成技能
-- **引用路径**：`plugins/image/skills/image-generation/subskills/nanobanana/`
+- **引用路径**：`kernel/defaults/skills/image-generation/subskills/nanobanana/`
 - **版权所有**：Copyright (c) 2026 Antonio Cárdenas, yeou.dev
-- **许可证**：MIT License（详见 [LICENSE](plugins/image/skills/image-generation/subskills/nanobanana/LICENSE) 及 [SOURCE](plugins/image/skills/image-generation/subskills/nanobanana/SOURCE)）
+- **许可证**：MIT License（详见 [LICENSE](kernel/defaults/skills/image-generation/subskills/nanobanana/LICENSE) 及 [SOURCE](kernel/defaults/skills/image-generation/subskills/nanobanana/SOURCE)）
 
 ### 3.2 OpenAI 图像生成技能
-- **引用路径**：`plugins/image/skills/image-generation/subskills/openai/`
-- **许可证**：Apache License 2.0（详见 [LICENSE.txt](plugins/image/skills/image-generation/subskills/openai/LICENSE.txt)）
+- **引用路径**：`kernel/defaults/skills/image-generation/subskills/openai/`
+- **许可证**：Apache License 2.0（详见 [LICENSE.txt](kernel/defaults/skills/image-generation/subskills/openai/LICENSE.txt)）
 
 ### 3.3 GPT Taste 提示词模板
 - **引用路径**：`plugins/gpt-taste/`

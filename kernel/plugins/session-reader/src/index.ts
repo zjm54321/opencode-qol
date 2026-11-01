@@ -40,7 +40,7 @@ function diffMetadata(sessionID: string, diffs: FileDiff[]) {
 export default Plugin.define({
   id: "opencode.qol.session-reader",
   async setup(ctx) {
-    const client = new OpenCodeClient();
+    const client = new OpenCodeClient({ channel: ctx.app.channel });
     const getSessionSafe = async (id: string, signal: AbortSignal): Promise<SessionInfo | undefined> => {
       signal.throwIfAborted();
       if (typeof (ctx as any).session?.get === "function") {
@@ -76,14 +76,7 @@ export default Plugin.define({
       try { return (await client.getSessionDiff(input, signal)).data; }
       catch {
         signal.throwIfAborted();
-        if (typeof (ctx as any).session?.diff !== "function") return undefined;
-        try {
-          const res = await (ctx as any).session.diff({ sessionID: input.sessionID });
-          return res?.data ?? res ?? [];
-        } catch {
-          signal.throwIfAborted();
-          return undefined;
-        }
+        return undefined;
       }
     };
     const registration = await ctx.tool.transform(editor => {

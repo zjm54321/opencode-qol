@@ -148,6 +148,65 @@ describe("clear-encrypted direct server command", () => {
     expect(h.deps.helper).not.toHaveBeenCalled();
   });
 
+  test.each(["get", "interrupt", "wait"] as const)("timeout prevents helper launch when %s ignores its signal and resolves late", async stage => {
+    const entered = deferred();
+    const release = deferred<unknown>();
+    let signal!: AbortSignal;
+    const h = await harness((ctx, deps) => {
+      deps.timeout = 10;
+      if (stage === "get") ctx.session.get = mock(async (_input, options) => {
+        signal = options!.signal;
+        entered.resolve();
+        return await release.promise as Awaited<ReturnType<ServerContext["session"]["get"]>>;
+      });
+      else ctx.session[stage] = mock(async (_input, options) => {
+        signal = options!.signal;
+        entered.resolve();
+        return release.promise;
+      });
+    });
+    const pending = h.command.execute(invocation());
+    await entered.promise;
+    await expect(pending).rejects.toThrow(stage === "get" ? reasons.cancelled : reasons.stopped);
+    expect(signal.aborted).toBe(true);
+    expect(h.deps.helper).not.toHaveBeenCalled();
+    release.resolve(stage === "get" ? h.session : undefined);
+    await release.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.deps.helper).not.toHaveBeenCalled();
+  });
+
+  test.each(["get", "interrupt", "wait"] as const)("RPC cancellation prevents a late signal-ignoring %s from launching the helper", async stage => {
+    const entered = deferred();
+    const release = deferred<unknown>();
+    let signal!: AbortSignal;
+    const h = await harness(ctx => {
+      if (stage === "get") ctx.session.get = mock(async (_input, options) => {
+        signal = options!.signal;
+        entered.resolve();
+        return await release.promise as Awaited<ReturnType<ServerContext["session"]["get"]>>;
+      });
+      else ctx.session[stage] = mock(async (_input, options) => {
+        signal = options!.signal;
+        entered.resolve();
+        return release.promise;
+      });
+    });
+    const controller = new AbortController();
+    const pending = h.rpcCall({ sessionID: "ses-current" }, controller.signal);
+    await entered.promise;
+    controller.abort();
+    expect(await pending).toMatchObject({ type: "failed", message: stage === "get" ? reasons.cancelled : reasons.stopped });
+    expect(signal.aborted).toBe(true);
+    expect(h.deps.helper).not.toHaveBeenCalled();
+    release.resolve(stage === "get" ? h.session : undefined);
+    await release.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.deps.helper).not.toHaveBeenCalled();
+  });
+
   test("TUI exposes only a palette shortcut, leaving slash ownership to the server", () => {
     let layer!: ReturnType<Parameters<Parameters<typeof tui.setup>[0]["keymap"]["layer"]>[0]>;
     tui.setup({ keymap: { layer: factory => { layer = factory(); } } } as Parameters<typeof tui.setup>[0]);

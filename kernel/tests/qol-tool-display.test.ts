@@ -12,6 +12,7 @@ type Summary = { icon: string; title: string; lines: string[]; failed: boolean; 
 type Helper = {
   QOL_TOOL_DISPLAYS: readonly string[]
   clipText: (value: string, width: number) => string
+  qolToolSubject: (tool: string) => string
   qolToolSummary: (input: {
     tool: string
     status: string
@@ -47,13 +48,10 @@ afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true })
 })
 
-const image = (status: string, input: object = {}, metadata: object = {}, output = "") =>
-  helper.qolToolSummary({ tool: "image_gen", status, input: { prompt: "a cat", ...input }, metadata, output })!
-
 describe("display selection", () => {
-  test("covers exactly the five QoL tools", () => {
+  test("covers exactly the three QoL session tools", () => {
     expect([...helper.QOL_TOOL_DISPLAYS].sort()).toEqual(
-      ["image_gen", "image_gen_nano", "session_diff", "session_list", "session_read"].sort(),
+      ["session_diff", "session_list", "session_read"].sort(),
     )
     expect(helper.qolToolSummary({ tool: "webfetch", status: "completed", input: {}, metadata: {} })).toBeUndefined()
   })
@@ -64,55 +62,18 @@ describe("display selection", () => {
     expect(patch).toContain("+        <QolTool {...toolprops} />")
     for (const name of helper.QOL_TOOL_DISPLAYS) expect(patch).toContain(`+  ${name}: QOL_RULE,`)
   })
-})
 
-describe("image summaries", () => {
-  test("running uses an honest spinner label", () => {
-    expect(image("running", { model: "gpt-image-2.5-flare" })).toMatchObject({
-      icon: "▣",
-      running: true,
-      title: "Generating image… · gpt-image-2.5-flare",
-    })
-    expect(image("streaming").title).toBe("Generating image…")
-    expect(image("running", { referenced_image_paths: ["a.png"] }).title).toBe("Editing image…")
+  test.each(["running", "completed", "error"])("native image generation keeps upstream generic rendering when %s", (status) => {
+    const tool = "experimental_image_generate"
+    expect(helper.QOL_TOOL_DISPLAYS).not.toContain(tool)
+    expect(helper.qolToolSummary({ tool, status, input: {}, metadata: {} })).toBeUndefined()
+    expect(helper.qolToolSubject(tool)).toBe(tool)
   })
 
-  test("success pluralises from metadata and never shows the prompt", () => {
-    const one = image("completed", {}, { count: 1, model: "m", aspect_ratio: "16:9", files: ["out/a.png"] })
-    expect(one.title).toBe("Generated 1 image · m · 16:9")
-    expect(one.lines).toEqual(["↳ Saved out/a.png"])
-    expect(one.title).not.toContain("a cat")
-    const many = image("completed", {}, { count: 3, edited: true, files: ["1", "2", "3"] })
-    expect(many.title).toBe("Edited 3 images")
-    expect(many.lines).toEqual(["↳ Saved 1", "↳ Saved 2", "↳ +1 more"])
-  })
-
-  test("metadata.edited wins over input heuristics; nano references are not edits", () => {
-    expect(image("completed", { referenced_image_paths: ["a"] }, { count: 1, edited: false }).title).toBe(
-      "Generated 1 image",
-    )
-    const nano = helper.qolToolSummary({
-      tool: "image_gen_nano",
-      status: "completed",
-      input: { referenced_image_paths: ["a"] },
-      metadata: { count: 1 },
-    })
-    expect(nano?.title).toBe("Generated 1 image")
-  })
-
-  test("legacy results fall back only to real evidence", () => {
-    expect(image("completed", {}, {}, "![Generated image](out/x.png)\n\n`out/x.png`")).toMatchObject({
-      title: "Generated 1 image",
-      lines: ["↳ Saved out/x.png"],
-    })
-    expect(image("completed", {}, {}, "done").title).toBe("Image request finished")
-    expect(image("completed", {}, { count: 0 }).title).toBe("No image returned")
-  })
-
-  test("errors are failures, including legacy error payloads", () => {
-    expect(image("error").title).toBe("Image generation failed")
-    const legacy = image("completed", {}, {}, JSON.stringify({ status: "error", error_code: "AUTH_MISSING", message: "x" }))
-    expect(legacy).toMatchObject({ failed: true, title: "Image generation failed · AUTH_MISSING", lines: ["↳ x"] })
+  test("the session view only opts session tools into QoL rendering", async () => {
+    const patch = await readFile(PATCH, "utf8")
+    expect(patch).toContain("+      <Match when={QOL_SESSION_TOOLS.includes(display())}>")
+    expect(patch).not.toContain('+  experimental_image_generate: QOL_RULE,')
   })
 })
 

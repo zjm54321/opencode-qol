@@ -27,6 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/zjm54321/opencode-qol/main/scripts/
 ## Monorepo 布局与发布安装
 
 - `kernel/`：默认配置、插件、源码补丁、测试、依赖锁以及 Nix 构建逻辑。
+- [`clients/windows/`](clients/windows)：FluentCode 原生 Windows 客户端子模块；父仓库只保存固定提交的 gitlink，源码与历史留在独立客户端仓库，不进入 Linux Nix 闭包。
 - 根目录保留 `flake.nix`、`flake.lock`，统一导出 `.#default`、`.#kernel` 和 `.#opencode`；构建入口为 `kernel/nix/package.nix`。
 - 安装和运行脚本统一放在 `scripts/`：`scripts/install.sh`、`scripts/install.ps1`、`scripts/run-isolated.sh`；发布工作流为 `.github/workflows/release.yml`。
 - 私有 `isolated/` 配置保留在根目录，由 `.gitignore` 忽略，不纳入 Git 跟踪。
@@ -49,6 +50,29 @@ Linux x64 发布归档包含完整 Nix 闭包，安装前需要 Nix；脚本导�
 推送 `v*` 标签自动发布 Linux 包、安装脚本和 `SHA256SUMS.txt`；手动触发需要填写已有标签。
 
 `bun test` 只发现 `kernel/tests/`，不会进入 `result` 的第三方测试树；插件源码测试需要已准备好的上游工作区依赖与构建期 vendor 源码。
+
+## Windows 客户端 · FluentCode
+
+[FluentCode](clients/windows) 是基于 WinUI 3 和 .NET 10 的原生 Windows x64 客户端，采用 GPL-3.0-or-later。`clients/windows` 是锁定具体提交的 Git 子模块：普通克隆不下载客户端内容，按需递归初始化才下载独立客户端仓库；父仓库不合并客户端历史。当前客户端版本为 **1.2611.1**；父仓库的 Windows 发布使用 `fluentcode-v1.2611.1` 这类 `fluentcode-v*` 标签，与 Linux QoL 的 `v*` 标签分开。
+
+**本集成分支尚待客户端独立仓库发布及 URL 确认**：`.gitmodules` 只登记路径，未填写 URL，也不包含机器本地路径。配置真实 URL 并确保锁定提交可下载后，才可使用以下初始化命令及远程 CI：
+
+```sh
+git submodule update --init --recursive
+```
+
+更新客户端时，先在独立仓库提交并发布，再在父仓库提交 `clients/windows` 的 gitlink 更新；只有父仓库锁定版本改变才会触发这里的客户端 CI。只需 Linux 内核时无需初始化子模块。
+
+在 Windows 的短路径 Git 克隆中，安装 .NET 10 SDK 和 Visual Studio MSBuild 后执行：
+
+```powershell
+Set-Location .\clients\windows
+.\tools\browser-runtime\prepare.ps1
+.\scripts\build-debug.ps1
+.\scripts\publish-release.ps1
+```
+
+浏览器运行时、编译输出和测试证据都保存在客户端内的忽略目录，不纳入 Git。客户端不会自动启动 OpenCode 后端；部署要求和测试方法见[客户端文档](clients/windows/README.md)及[测试指南](clients/windows/docs/testing.md)。Windows CI 独立构建并上传未签名的完整发布目录；MSIX 打包另行实施。
 
 ## 🌟 整合包重大特性更新 (Major QoL Update)
 
@@ -155,7 +179,7 @@ programs.opencode-qol = {
 - **Monorepo 内置闭包**：自有内置插件（`clear-encrypted`, `session-reader`, `opencode-desktop-bridge`）在 `kernel/plugins/` 本地维护并归属 QoL 项目；`oh-my-opencode-slim@3.0.6` 与 `billion-context@0.1.210` 构建期统一锁定并收录到产物的 `vendor/`，无运行时 npm 安装。
 - **原生图像生成**：使用 OpenCode 的 `experimental_image_generate`，不再内置独立图片执行插件。图像模型在 `providers.<provider>.models` 中声明 `type: "image"`，复用标准 provider 认证与端点；可用 `experimental.image_generate.model` 指定默认模型。旧 `imagegen.json` 不再参与配置。`image-generation` 技能独立维护于 `kernel/defaults/skills/image-generation/`，保留提示词参考，执行流程遵循原生工具。
 - **官方 PTY 归一**：`kernel/src/native-pty.ts` 复用 `PersistentPty.Service` 与原生终端面板；`pty_read` 读取守护进程保留的最近 2 MiB 输出，支持分页和正则检索，不另建日志存储。工具终端退出后保留输出，清理或守护进程结束后释放；退出通知使用原生 synthetic 消息。
-- **桌面桥接边界**：仅提供 `opencode-desktop-bridge` 插件包并采用新 RPC 标识，不保留旧名称兼容，不包含 Windows 原生前端程序。
+- **桌面桥接边界**：Linux 闭包仅提供 `opencode-desktop-bridge` 插件包并采用新 RPC 标识，不保留旧名称兼容；Windows 原生前端独立位于 `clients/windows/`。
 - **随包 MCP**：Codegraph `1.6.2` 与 NixOS MCP `3.0.2` 的 stdio 服务程序随 Nix 闭包提供，内置插件自动注册；显式同名配置优先。Codegraph 索引由使用者创建，启动不自动索引项目。Context7 与 GitHub grep 沿用 Slim 的远程 MCP 定义。
 - **QoL 标识**：首页显示小号 `qol`；版本展示动态追加 `-qol`，不改变上游版本、更新通道或状态目录。Sunburst 生成字标位于 `assets/branding/`，随包安装到 `share/opencode-qol/branding/`。
 - **构建与验证**：当前未配置发布缓存，无缓存时由 Nix 本地构建。源码与契约测试覆盖真实 PTY 守护进程、清理插件的临时数据库以及会话服务发现。整包验收还检查 CLI 版本、宿主插件注册及本地 MCP 连接；具体结果以交付时的构建与运行记录为准。本仓库不会自动部署到现用系统。

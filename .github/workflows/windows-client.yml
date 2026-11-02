@@ -1,0 +1,134 @@
+name: Windows client
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["fluentcode-v*"]
+    paths:
+      - "clients/windows"
+      - "clients/windows/**"
+      - ".gitmodules"
+      - ".github/workflows/windows-client.yml"
+  pull_request:
+    paths:
+      - "clients/windows"
+      - "clients/windows/**"
+      - ".gitmodules"
+      - ".github/workflows/windows-client.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: C:\src\ocq\clients\windows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Create short Windows checkout
+        working-directory: ${{ github.workspace }}
+        run: |
+          New-Item -ItemType Directory -Path C:\src -Force | Out-Null
+          git -c core.longpaths=true clone --no-hardlinks --config core.longpaths=true "$env:GITHUB_WORKSPACE" C:\src\ocq
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C C:\src\ocq checkout --detach "$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Reuse the authenticated, pinned client checkout instead of fetching it again.
+          $clientSource = Join-Path $env:GITHUB_WORKSPACE 'clients\windows'
+          git -C C:\src\ocq -c protocol.file.allow=always -c "submodule.clients/windows.url=$clientSource" submodule update --init --recursive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare BrowserRuntime
+        run: .\tools\browser-runtime\prepare.ps1
+      - name: Build Debug client
+        run: .\scripts\build-debug.ps1 -EvidenceRoot artifacts\ci-debug
+      - name: Run offline client suite
+        # Default runners use fake transports/local fixtures, not WSL or a live OpenCode server.
+        # Startup smoke is run once against the explicit Release publish below.
+        run: >-
+          python tests/run-suite.py --windows
+          --root artifacts\windows-ci-suite-${{ github.run_id }}-${{ github.run_attempt }}
+          --exclude startup-smoke --execute
+      - name: Publish Release client
+        id: publish
+        run: .\scripts\publish-release.ps1 -EvidenceRoot artifacts\ci-release
+      - name: Smoke-test published client
+        run: >-
+          .\tests\startup-smoke\run.ps1
+          -PublishDirectory artifacts\ci-release\publish
+          -EvidenceRoot artifacts\ci-startup
+      - name: Upload unsigned Windows publish
+        if: ${{ always() && steps.publish.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluentcode-windows-x64
+          path: C:\src\ocq\clients\windows\artifacts\ci-release\publish\
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Upload build and test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluentcode-windows-evidence
+          path: |
+            C:\src\ocq\clients\windows\artifacts\windows-ci-suite-*
+            C:\src\ocq\clients\windows\artifacts\ci-debug\*.json
+            C:\src\ocq\clients\windows\artifacts\ci-debug\*.log
+            C:\src\ocq\clients\windows\artifacts\ci-debug\*-output.txt
+            C:\src\ocq\clients\windows\artifacts\ci-release\*.json
+            C:\src\ocq\clients\windows\artifacts\ci-release\*.log
+            C:\src\ocq\clients\windows\artifacts\ci-release\*-output.txt
+            C:\src\ocq\clients\windows\artifacts\ci-startup\
+
+  release:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/fluentcode-v') }}
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fluentcode-windows-x64
+          path: publish
+      - name: Package unsigned Windows client
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^fluentcode-v', ''
+          $productVersion = (Get-Item publish\FluentCode.exe).VersionInfo.ProductVersion.Split('+')[0]
+          if ($version -ne $productVersion) { throw "Tag version $version does not match client version $productVersion." }
+          New-Item -ItemType Directory -Path dist | Out-Null
+          $name = "FluentCode-windows-x64-$version.zip"
+          [IO.Compression.ZipFile]::CreateFromDirectory(
+            (Resolve-Path publish).Path,
+            (Join-Path (Resolve-Path dist).Path $name),
+            [IO.Compression.CompressionLevel]::Optimal,
+            $false)
+          $hash = (Get-FileHash (Join-Path dist $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -Encoding utf8 dist\SHA256SUMS.txt
+      - name: Publish Windows GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: FluentCode ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            Unsigned Windows x64 client ZIP with the complete offline BrowserRuntime.
+            Extract the entire archive; .NET 10 Desktop Runtime and Microsoft Edge WebView2 Runtime are required.
+            This client release is separate from the Linux QoL release. No MSIX or certificate signing is performed in CI.
+          files: |
+            dist/FluentCode-windows-x64-*.zip
+            dist/SHA256SUMS.txt

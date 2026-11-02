@@ -1,0 +1,4 @@
+[submodule "clients/windows"]
+	path = clients/windows
+	# Publication pending: set url to the actual standalone client repository before sharing.
+	# Local verification uses submodule.clients/windows.url in untracked Git config only.

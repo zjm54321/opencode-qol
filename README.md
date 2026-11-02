@@ -55,7 +55,7 @@ Linux x64 发布归档包含完整 Nix 闭包，安装前需要 Nix；脚本导�
 
 [FluentCode](clients/windows) 是基于 WinUI 3 和 .NET 10 的原生 Windows x64 客户端，采用 GPL-3.0-or-later。`clients/windows` 是锁定具体提交的 Git 子模块：普通克隆不下载客户端内容，按需递归初始化才下载独立客户端仓库；父仓库不合并客户端历史。当前客户端版本为 **1.2611.1**；父仓库的 Windows 发布使用 `fluentcode-v1.2611.1` 这类 `fluentcode-v*` 标签，与 Linux QoL 的 `v*` 标签分开。
 
-**本集成分支尚待客户端独立仓库发布及 URL 确认**：`.gitmodules` 只登记路径，未填写 URL，也不包含机器本地路径。配置真实 URL 并确保锁定提交可下载后，才可使用以下初始化命令及远程 CI：
+客户端源码与完整历史发布在独立的公共仓库 [zjm54321/FluentCode](https://github.com/zjm54321/FluentCode)。`.gitmodules` 使用该仓库的 HTTPS URL；按父仓库锁定的提交初始化：
 
 ```sh
 git submodule update --init --recursive

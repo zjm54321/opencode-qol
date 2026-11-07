@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { createParser, createStreamingParser } from "@openuidev/lang-core";
 import { library, librarySchema, limits } from "../plugins/native-ui/src/library.ts";
 import { description } from "../plugins/native-ui/src/prompt.ts";
+import { componentReference, examples } from "../plugins/native-ui/src/reference.ts";
 import { failureText, validateSource } from "../plugins/native-ui/src/validate.ts";
 import { catalogManifest } from "../plugins/native-ui/scripts/generate-catalog.ts";
 
@@ -33,7 +34,7 @@ describe("native_ui official parser validation", () => {
     ['root = Card([Text(@Missing(1))])', "unknown-function"],
     ['root = Input(false)', "type-mismatch"],
     ['root = Card([Button("Bad", {type:"continue_conversation",context:"oops"})])', "action"],
-    ['root = Card([Button("Open", @OpenUrl("https://example.org"))])', "unsupported"],
+    ['root = Image("http://example.org/photo.png", "Photo")', "url"],
     ['root = Text("file:///etc/passwd")', "url"],
     ['root = Text("javascript:alert(1)")', "url"],
     ['root = Markdown("![image](file:///etc/passwd)")', "url"],
@@ -92,7 +93,7 @@ describe("native_ui official parser validation", () => {
     expect(description.length).toBeLessThan(14_000);
   });
   test("FluentCode embeds a byte-identical catalog and all three demos validate on the server", async () => {
-    const fluent = process.env.NUI_FLUENTCODE_ROOT ?? "/mnt/c/src/fluentcode-lanes/native-ui";
+    const fluent = process.env.NUI_FLUENTCODE_ROOT ?? "/mnt/c/src/fluentcode-lanes/native-ui-v1";
     expect(await Bun.file(`${fluent}/src/FluentCode/Services/NativeUi/catalog.json`).text()).toBe(await Bun.file(new URL("../plugins/native-ui/catalog.json", import.meta.url)).text());
     for (const name of ["calculator", "budget", "assistant"]) {
       const checked = validateSource(await Bun.file(`${fluent}/tests/native-ui/fixtures/demo-${name}.oui`).text());
@@ -103,10 +104,23 @@ describe("native_ui official parser validation", () => {
     expect(validateSource('$n = 0\nroot = Button("Toggle", $n == 0 ? @Set($n, 1) : @Reset($n))').ok).toBe(true);
     expect(validateSource('root = Text("bad\\q")').ok).toBe(false);
   });
+  test("full catalog reference examples validate and expose complete positional docs", () => {
+    expect(Object.keys(library.components)).toHaveLength(54);
+    expect(library.components.HtmlView).toBeUndefined();
+    for (const name of Object.keys(library.components)) {
+      expect(examples[name]).toBeDefined();
+      expect(validateSource(examples[name]!)).toMatchObject({ ok: true });
+      expect(componentReference([name])).toContain("Props in positional order:");
+      expect(componentReference([name])).toContain(examples[name]!);
+    }
+    expect(() => componentReference(["HtmlView"])).toThrow("Unknown native component");
+    expect(validateSource('root = Button("Open", @OpenUrl("https://example.org"))').ok).toBe(true);
+    expect(failureText([])).toContain("native_ui_reference");
+  });
 });
 
 test("tool registration fails bad input, avoids echoing data, restricts non-primary agents and disposes", async () => {
-  let registered: any;
+  const registrations: any[] = [];
   let toolDisposed = 0, agentDisposed = 0;
   const agents = [
     { id: "main", mode: "primary", permissions: [] as unknown[] },
@@ -114,10 +128,13 @@ test("tool registration fails bad input, avoids echoing data, restricts non-prim
     { id: "both", mode: "all", permissions: [] as unknown[] },
   ];
   const dispose = await plugin.setup({
-    tool: { transform: async (callback: any) => { callback({ add: (tool: any) => { registered = tool; } }); return { dispose: async () => { toolDisposed++; } }; } },
+    tool: { transform: async (callback: any) => { callback({ add: (tool: any) => { registrations.push(tool); } }); return { dispose: async () => { toolDisposed++; } }; } },
     agent: { transform: async (callback: any) => { callback({ list: () => agents, update: (id: string, fn: any) => fn(agents.find(agent => agent.id === id)) }); return { dispose: async () => { agentDisposed++; } }; } },
   } as any);
+  const [registered, reference] = registrations;
   expect(registered.name).toBe("native_ui");
+  expect(reference.name).toBe("native_ui_reference");
+  expect((await reference.execute({ components: ["Chart", "Table"] }, { signal: new AbortController().signal })).content).toContain("Chart(type, data");
   expect(registered.options).toEqual({ codemode: false, permission: "native_ui" });
   const signal = new AbortController().signal;
   await expect(registered.execute({ source: 'root = HtmlView("bad")' }, { signal })).rejects.toThrow("line 1, column");
@@ -126,7 +143,7 @@ test("tool registration fails bad input, avoids echoing data, restricts non-prim
   expect(result.content.length).toBeLessThan(100);
   expect(result.metadata.nativeUi.title).toBe("Example");
   expect(agents[0].permissions).toEqual([]);
-  for (const agent of agents.slice(1)) expect(agent.permissions).toEqual([{ action: "native_ui", resource: "*", effect: "deny" }]);
+  for (const agent of agents.slice(1)) expect(agent.permissions).toEqual([{ action: "native_ui", resource: "*", effect: "deny" }, { action: "native_ui_reference", resource: "*", effect: "deny" }]);
   await dispose();
   expect([toolDisposed, agentDisposed]).toEqual([1, 1]);
 });

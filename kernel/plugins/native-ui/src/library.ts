@@ -2,6 +2,7 @@
 // Prop names/order and schemas follow OpenIntelligentUI (MIT), components/{layout,text,controls}.tsx.
 import { action, createLibrary, defineComponent, markReactive, tagSchemaId } from "@openuidev/lang-core";
 import { z } from "zod/v4";
+import { additionalComponents } from "./components.ts";
 
 export const limits = Object.freeze({ sourceLength: 65_536, nodes: 4_096, depth: 64, stringLength: 16_384 });
 
@@ -33,5 +34,5 @@ export const sliceComponents = [
   defineComponent({ name: "Checkbox", props: z.object({ checked: reactive(z.boolean()), label: z.string(), lineThrough: z.boolean().optional() }), description: "Boolean input bound to a $variable.", component: null }),
 ];
 
-export const library = createLibrary({ id: "fluentcode-native-ui@0.1.0", root: "Col", components: sliceComponents });
+export const library = createLibrary({ id: "fluentcode-native-ui@0.2.0", root: "Col", components: [...sliceComponents, ...additionalComponents] });
 export const librarySchema = library.toJSONSchema();

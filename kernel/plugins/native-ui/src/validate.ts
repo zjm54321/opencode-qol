@@ -133,9 +133,6 @@ export function validateSource(source: string): Validation {
     if (item.node.k === "Ref" && ast.has(item.node.n) && !item.refs.has(item.node.n)) {
       pending.push({ ...item, node: ast.get(item.node.n)!, depth: item.depth + 1, refs: new Set([...item.refs, item.node.n]) });
     } else for (const child of children(item.node)) pending.push({ ...item, node: child, depth: item.depth + 1 });
-    if (item.node.k === "Comp" && item.node.name === "OpenUrl") {
-      errors.push(diagnostic(source, statements.get(item.id)?.start ?? 0, "unsupported", "@OpenUrl is not enabled in this slice."));
-    }
   }
   // Invalid non-comment lines must not be silently discarded by the tolerant parser.
   const covered = new Set<number>();
@@ -230,9 +227,10 @@ export function validateSource(source: string): Validation {
     const id = typeof record.statementId === "string" ? record.statementId : statementId;
     if (record.type === "element" && typeof record.typeName === "string") {
       const component = library.components[record.typeName];
-      const props = record.props as Record<string, unknown>;
+        const props = record.props as Record<string, unknown>;
+        if (record.typeName === "Image" && typeof props.src === "string" && !/^https:\/\//i.test(props.src)) errors.push(diagnostic(source, statements.get(id ?? "root")?.start ?? 0, "url", "Image requires an absolute HTTPS URL and explicit user loading."));
       for (const [key, child] of Object.entries(props)) {
-        const dynamic = (v: unknown): boolean => !!v && typeof v === "object" && ("k" in v || Object.values(v).some(dynamic));
+        const dynamic = (v: unknown): boolean => !!v && typeof v === "object" && ("k" in v || (v as Record<string, unknown>).type === "element" || Object.values(v).some(dynamic));
         if (key === "action" && child != null && !(typeof child === "object" && "k" in child && isActionExpression(child as ASTNode))) {
           errors.push(diagnostic(source, locate({ statementId: id, component: record.typeName, path: `/${key}`, code: "action" }), "action", "Actions must be syntax calls, not data objects."));
         } else if (child != null && component && !dynamic(child)) {
@@ -247,5 +245,5 @@ export function validateSource(source: string): Validation {
 }
 
 export function failureText(errors: Diagnostic[]): string {
-  return "native_ui validation failed. Fix and retry:\n" + errors.map(error => `line ${error.line}, column ${error.column} [${error.code}]: ${error.message}`).join("\n");
+  return "native_ui validation failed. Fix and retry; call native_ui_reference({components:[...]}) for full positional prop docs and examples:\n" + errors.map(error => `line ${error.line}, column ${error.column} [${error.code}]: ${error.message}`).join("\n");
 }

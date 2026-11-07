@@ -45,11 +45,12 @@ describe("native image generation build registration", () => {
     const plugins = builtin.match(/export const QolPlugins: readonly EffectPlugin\[\] = \[([\s\S]*?)\]\.map\(adapt\)/)?.[1]
     expect(plugins).toBeDefined()
     expect(plugins!.split(",").map((name) => name.trim()).filter(Boolean)).toEqual([
-      "bundledMcp", "omo", "billion", "sessionReader", "clearEncrypted", "gptTaste", "modelPolicy", "desktopBridge",
+      "bundledMcp", "omo", "billion", "sessionReader", "clearEncrypted", "gptTaste", "modelPolicy", "desktopBridge", "nativeUi",
     ])
     expect([...builtin.matchAll(/from "\.\/plugins\/([^"]+)"/g)].map((match) => match[1])).toEqual([
       "session-reader/src/index.ts", "clear-encrypted/src/index.ts", "gpt-taste/index.js",
       "model-policy/index.js", "desktop-bridge/src/index.ts", "bundled-mcp/src/index.ts",
+      "native-ui/src/index.ts",
     ])
   })
 
@@ -57,7 +58,7 @@ describe("native image generation build registration", () => {
     const prepare = await Bun.file(new URL("../nix/prepare-source.mjs", import.meta.url)).text()
     const names = prepare.match(/for \(const name of (\[[^\]]+\])\) \{\n  await copy\(path\.join\(repository, "plugins", name\)/)?.[1]
     expect(names).toBeDefined()
-    expect(JSON.parse(names!)).toEqual(["session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp"])
+    expect(JSON.parse(names!)).toEqual(["session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp", "native-ui"])
   })
 
   test("the retained image skill comes from defaults and is copied only to OMO", async () => {

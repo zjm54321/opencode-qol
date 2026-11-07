@@ -83,7 +83,7 @@ describe("native_ui official parser validation", () => {
     for (const chunk of source.match(/.{1,7}|\n/g) ?? []) stream.push(chunk);
     expect(stream.getResult(true)).toEqual(createParser(librarySchema, library.root).parse(source));
   });
-  test("manifest and prompt use the same ordered slice definitions", async () => {
+  test("manifest and prompt use the same ordered catalog definitions", async () => {
     expect(await Bun.file(new URL("../plugins/native-ui/catalog.json", import.meta.url)).json()).toEqual(catalogManifest());
     expect(catalogManifest().components.Slider.props.map(prop => prop.name)).toEqual(["value", "min", "max", "step", "label", "unit", "marks"]);
     expect(catalogManifest().components.Input.props[0].reactive).toBe(true);
@@ -92,10 +92,10 @@ describe("native_ui official parser validation", () => {
     expect(description).toContain("未支持");
     expect(description.length).toBeLessThan(14_000);
   });
-  test("FluentCode embeds a byte-identical catalog and all three demos validate on the server", async () => {
+  test("FluentCode embeds a byte-identical catalog and all six demos validate on the server", async () => {
     const fluent = process.env.NUI_FLUENTCODE_ROOT ?? "/mnt/c/src/fluentcode-lanes/native-ui-v1";
     expect(await Bun.file(`${fluent}/src/FluentCode/Services/NativeUi/catalog.json`).text()).toBe(await Bun.file(new URL("../plugins/native-ui/catalog.json", import.meta.url)).text());
-    for (const name of ["calculator", "budget", "assistant"]) {
+    for (const name of ["calculator", "budget", "assistant", "dashboard", "form", "mixed"]) {
       const checked = validateSource(await Bun.file(`${fluent}/tests/native-ui/fixtures/demo-${name}.oui`).text());
       expect(checked).toMatchObject({ ok: true });
     }

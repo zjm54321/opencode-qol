@@ -6,8 +6,8 @@
 #
 # 【改动内容】
 # 1. 纯展示层版本标识：在 packages/util/src/qol-version.ts 中实现通用工具函数 qolVersion 与 qolVersionLabel。
-# 2. 在 CLI --version、TUI 底部 Footer、启动闪屏 Splash 及 Debug 对话框中，仅对展示文本追加 -qol
-#    后缀（如 v2.2.5-qol），使使用者清晰感知 QoL 增强状态。
+# 2. 在 CLI --version、TUI 底部 Footer、启动闪屏 Splash 及 Debug 对话框中，仅对展示文本追加 -qol.2
+#    后缀（如 v2.2.5-qol.2），使使用者清晰感知 QoL 增强状态。
 # 3. 严格保持底层核心变量 OPENCODE_VERSION（2.2.5）为原版数字，不破坏数据库迁移与服务通信。
 # 4. 彻底剥离任何 Logo 篡改，终端首页与全系统的 ASCII Logo 100% 保持官方原生字符艺术排版。
 #
@@ -18,7 +18,7 @@
 # 纯展示层改造，不篡改系统状态目录判定、协议兼容性判定或数据库迁移版本号，零侵入原生 Logo。
 # ==============================================================================
 diff --git a/packages/cli/src/index.ts b/packages/cli/src/index.ts
-index a81de93..32636ab 100644
+index 26784ac..27868f9 100644
 --- a/packages/cli/src/index.ts
 +++ b/packages/cli/src/index.ts
 @@ -10,6 +10,7 @@ import { Observability } from "@opencode/util/observability"
@@ -29,7 +29,7 @@ index a81de93..32636ab 100644
  import { Global } from "@opencode/util/global"
  import { AppProcess } from "@opencode/util/process"
  import { Config } from "./config"
-@@ -106,7 +107,8 @@ Effect.gen(function* () {
+@@ -121,7 +122,8 @@ Effect.gen(function* () {
      local: OPENCODE_LOCAL,
      args: process.argv.slice(2),
    })
@@ -104,14 +104,14 @@ index 123b224..dcf9356 100644
    // Stop at the first non-fitting stage instead of backfilling lower-priority metadata.
 diff --git a/packages/util/src/qol-version.ts b/packages/util/src/qol-version.ts
 new file mode 100644
-index 0000000..8f3b601
+index 0000000..ecc0451
 --- /dev/null
 +++ b/packages/util/src/qol-version.ts
 @@ -0,0 +1,12 @@
-+const suffix = "-qol"
++const suffix = "-qol.2"
 +
 +export function qolVersion(version: string) {
-+  const base = version.trim().replace(/^v(?=\d)/, "")
++  const base = version.trim().replace(/^v(?=\d)/, "").replace(/-qol(?:\.\d+)?$/, "")
 +  if (!base) return base
 +  return base.endsWith(suffix) ? base : base + suffix
 +}

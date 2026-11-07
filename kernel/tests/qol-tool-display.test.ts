@@ -70,6 +70,12 @@ describe("display selection", () => {
     expect(helper.qolToolSubject(tool)).toBe(tool)
   })
 
+  test.each(["task_report", "task_status", "task_cancel"])("OMO tool %s keeps upstream rendering", (tool) => {
+    expect(helper.QOL_TOOL_DISPLAYS).not.toContain(tool)
+    expect(helper.qolToolSummary({ tool, status: "completed", input: {}, metadata: {} })).toBeUndefined()
+    expect(helper.qolToolSubject(tool)).toBe(tool)
+  })
+
   test("the session view only opts session tools into QoL rendering", async () => {
     const patch = await readFile(PATCH, "utf8")
     expect(patch).toContain("+      <Match when={QOL_SESSION_TOOLS.includes(display())}>")

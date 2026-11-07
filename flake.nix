@@ -73,11 +73,11 @@
       flake = false;
     };
     oh-my-opencode-slim-src = {
-      url = "github:alvinunreal/oh-my-opencode-slim";
+      url = "github:alvinunreal/oh-my-opencode-slim/v3.0.7";
       flake = false;
     };
     billion-context-src = {
-      url = "github:ranxianglei/billion-context";
+      url = "github:ranxianglei/billion-context/v0.1.212";
       flake = false;
     };
   };

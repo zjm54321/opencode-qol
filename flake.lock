@@ -51,15 +51,16 @@
     "billion-context-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1793462930,
-        "narHash": "sha256-nq/paa2UwHYKp/VjogLA8P9Oxr/WbTV4NKyE1rkoPqw=",
+        "lastModified": 1793631714,
+        "narHash": "sha256-a2MAaWAHlGGoji7dDE7mBcAgDdlHrFwqBkKsrFS9LkY=",
         "owner": "ranxianglei",
         "repo": "billion-context",
-        "rev": "10821260a79fb4215699906184e05082156c89a5",
+        "rev": "daa082ead8a8ead60311e29ad4627bff0f569fc1",
         "type": "github"
       },
       "original": {
         "owner": "ranxianglei",
+        "ref": "v0.1.212",
         "repo": "billion-context",
         "type": "github"
       }
@@ -67,11 +68,11 @@
     "cloudflare-skills": {
       "flake": false,
       "locked": {
-        "lastModified": 1793397467,
-        "narHash": "sha256-CiJElxcIcnIGQjbkExTy/Ssf81Fmyq4bVr5X1X3X3lc=",
+        "lastModified": 1793966594,
+        "narHash": "sha256-CQsfj0OUmGj8BpMKyRwXulp720S1Ya64ywKk/nWYBtA=",
         "owner": "cloudflare",
         "repo": "skills",
-        "rev": "e44f580f9c4fa3bf268e284ae7706c7954ba31fd",
+        "rev": "7de59bfd40b36c64d5d2dd8f01d11d419b2c66e6",
         "type": "github"
       },
       "original": {
@@ -83,11 +84,11 @@
     "context7-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1793369256,
-        "narHash": "sha256-I0Ik7ebdTZppHgw4s+lmLG+jhF/+zcIrIyXOnfhhaUg=",
+        "lastModified": 1793973697,
+        "narHash": "sha256-05bTwOPwFJth5mLCbbxDswdEJtVvujcldEoa5+lq3e4=",
         "owner": "upstash",
         "repo": "context7",
-        "rev": "7836c583918374fbecffacf866afb7594b919466",
+        "rev": "078c0c731d19eb88d2391b236ab82a127dbabac3",
         "type": "github"
       },
       "original": {
@@ -148,11 +149,11 @@
     "knowledge-work-plugins": {
       "flake": false,
       "locked": {
-        "lastModified": 1793146388,
-        "narHash": "sha256-vAQOfi7fjrCmF8u2sVh4IQLppaRYDQKxwEwIPoxP41E=",
+        "lastModified": 1793948688,
+        "narHash": "sha256-MlNAtWl5PuW1r9TSc1dsqJinKmjrSlumF/1c3sitL8s=",
         "owner": "anthropics",
         "repo": "knowledge-work-plugins",
-        "rev": "2574e29377c7173d0cecffef29a6ecbd7f8ccb5d",
+        "rev": "ab4cb1cd383b4eb87383be8cf4e70cb5b2a2348d",
         "type": "github"
       },
       "original": {
@@ -212,11 +213,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1790510107,
-        "narHash": "sha256-EVMNYv7hYDDD9TGVT/hIyTYgpiXA8y3m5xIEIxuGNU0=",
+        "lastModified": 1793826729,
+        "narHash": "sha256-D5H7H+qMoTGI/jJtxKP4u7BdjkFnUyhOovTrf3pTOr0=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "3181085bfd08663b6b9e60bc7a8395c2aaa741bd",
+        "rev": "6dadaf4375be35033e1c84395adbd53ff5fded96",
         "type": "github"
       },
       "original": {
@@ -229,15 +230,16 @@
     "oh-my-opencode-slim-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1793434643,
-        "narHash": "sha256-h3+CSmJs0k0uOm5ZCvtQmEn3oGFeSHFI+I7BucRGVbM=",
+        "lastModified": 1793819420,
+        "narHash": "sha256-0EuxI99ldDkqjx4XybIJgprrhGDoXFG3eoArSawn/U0=",
         "owner": "alvinunreal",
         "repo": "oh-my-opencode-slim",
-        "rev": "48a4080dcea90e9defd5725e63304439243c01ba",
+        "rev": "89b5a7438f290680cf9e4f9d037b93c6ff2d6c30",
         "type": "github"
       },
       "original": {
         "owner": "alvinunreal",
+        "ref": "v3.0.7",
         "repo": "oh-my-opencode-slim",
         "type": "github"
       }
@@ -307,11 +309,11 @@
     "trailofbits-skills": {
       "flake": false,
       "locked": {
-        "lastModified": 1793212734,
-        "narHash": "sha256-vQiXAEv3+VsLweirfFaN1nD/PWuiDOlT5LeSLwIa304=",
+        "lastModified": 1793978375,
+        "narHash": "sha256-Ayq9NufLWIjNTFf/13BwlkcwrYzMpzI7XVuq3Tsgeyk=",
         "owner": "trailofbits",
         "repo": "skills",
-        "rev": "2be6433b39e009cd2b6fd3be1895f6b1faa5af9a",
+        "rev": "e4dd0bb5b15535f7c5a0834187dffba6ac37e4ff",
         "type": "github"
       },
       "original": {
@@ -323,11 +325,11 @@
     "ui-ux-pro-max-skill": {
       "flake": false,
       "locked": {
-        "lastModified": 1793462864,
-        "narHash": "sha256-3yvLXjJeedqrvjfMEg8NthseWWQTO4ipCjVqz5TNX8g=",
+        "lastModified": 1793862458,
+        "narHash": "sha256-tcAVWqpXx7bgTvAZh02DLvHaWTdp06tyFnm7RAbYu+0=",
         "owner": "nextlevelbuilder",
         "repo": "ui-ux-pro-max-skill",
-        "rev": "bf41cbc3ce63e30c922e58ef48741ba6133f9aa9",
+        "rev": "b7d5353e0130feb8c5574ef1251f8a1db1873ccb",
         "type": "github"
       },
       "original": {
@@ -339,11 +341,11 @@
     "wshobson-agents": {
       "flake": false,
       "locked": {
-        "lastModified": 1793403286,
-        "narHash": "sha256-UBBcidGPtl3sKG1+m5aPW/xS31SPVw3Qyo6J4ELlj6I=",
+        "lastModified": 1793894249,
+        "narHash": "sha256-iAR4wvr0I94kUaInNBAOH/p2nJY6e2W2oCjWpRjBzKA=",
         "owner": "wshobson",
         "repo": "agents",
-        "rev": "7e2fb559cf4b824b27f1fec49fe88f7511066d26",
+        "rev": "4bde3168b43c0655c4d00ea2726e631719908a6d",
         "type": "github"
       },
       "original": {

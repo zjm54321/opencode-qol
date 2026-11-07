@@ -32,7 +32,7 @@ let
   # Keep the official dependency graph; avoid Bun 1.4.2's
   # streaming download/extraction stall and make fetch failures bounded/visible.
   nodeModules = opencode.packages.${system}.opencode.node_modules.overrideAttrs (old: {
-    outputHash = "sha256-+GgLX4lq8fPOJVoDGp220uiCTLB0ZwrBkcNo36q9MZU=";
+    outputHash = "sha256-hV75d+Zs51vB6MfZ9luH1JB6jO+tqp9RYqqYyi3zQM4=";
     BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL = "1";
     BUN_CONFIG_HTTP_IDLE_TIMEOUT = "45";
     BUN_CONFIG_HTTP_RETRY_COUNT = "2";

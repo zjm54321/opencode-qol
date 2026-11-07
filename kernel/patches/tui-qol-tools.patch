@@ -19,14 +19,13 @@
 # 仅针对明确定义的 QoL 插件命名空间进行非侵入式放行与增强，保持原生通用组件行为不发生漂移。
 # ==============================================================================
 diff --git a/packages/tui/src/feature-plugins/system/plugins.tsx b/packages/tui/src/feature-plugins/system/plugins.tsx
-index f7f2982..eb6befa 100644
+index f7f2982..b4e9043 100644
 --- a/packages/tui/src/feature-plugins/system/plugins.tsx
 +++ b/packages/tui/src/feature-plugins/system/plugins.tsx
-@@ -10,6 +10,21 @@ import { useDialog } from "../../ui/dialog"
- import { errorMessage } from "../../util/error"
+@@ -11,6 +11,21 @@ import { errorMessage } from "../../util/error"
  
  const id = "opencode.plugins"
-+
+ 
 +// Bundled QoL plugins are user-facing even without external plugin configuration.
 +const qolPlugins = new Set([
 +  "oh-my-opencode-slim",
@@ -41,9 +40,10 @@ index f7f2982..eb6befa 100644
 +  "opencode.qol.desktop-bridge",
 +  "opencode.qol.bundled-mcp",
 +])
- 
++
  type Entry =
    | { readonly key: string; readonly runtime: "server"; readonly internal: boolean; readonly plugin: PluginInfo }
+   | {
 @@ -48,7 +63,7 @@ export function PluginsDialog(props: { context: Plugin.Context; plugins: ReturnT
        .map((plugin) => ({
          key: `tui:${plugin.id}`,
@@ -63,7 +63,7 @@ index f7f2982..eb6befa 100644
        }))
      return [
 diff --git a/packages/tui/src/mini/tool.ts b/packages/tui/src/mini/tool.ts
-index e911aef..78f4d12 100644
+index e911aef..576aaa3 100644
 --- a/packages/tui/src/mini/tool.ts
 +++ b/packages/tui/src/mini/tool.ts
 @@ -26,6 +26,7 @@ import {
@@ -154,7 +154,7 @@ index e911aef..78f4d12 100644
  
  function key(name: string): name is ToolName {
 diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
-index ce5d3cb..f7e4b16 100644
+index ce5d3cb..62a79b9 100644
 --- a/packages/tui/src/routes/session/index.tsx
 +++ b/packages/tui/src/routes/session/index.tsx
 @@ -99,6 +99,7 @@ import { getScrollAcceleration } from "../../util/scroll"
@@ -247,7 +247,7 @@ index 5a7af35..1b73102 100644
  export function toolDisplay(tool: string) {
 diff --git a/packages/tui/src/util/qol-tool-display.ts b/packages/tui/src/util/qol-tool-display.ts
 new file mode 100644
-index 0000000..ed533aa
+index 0000000..aec2211
 --- /dev/null
 +++ b/packages/tui/src/util/qol-tool-display.ts
 @@ -0,0 +1,175 @@

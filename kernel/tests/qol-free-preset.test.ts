@@ -25,7 +25,7 @@ test("free preset preserves specialist skills and MCP isolation", () => {
   }
   expect(preset.orchestrator.mcps).toEqual(["codegraph", "nixos"]);
   expect(preset.council.mcps).toEqual(["codegraph"]);
-  expect(config.marketplacePresets.free.agents).toEqual(["alvin/documenter"]);
+  expect(preset.marketplace.agents).toEqual(["alvin/documenter"]);
   expect(config.council.presets.free).toEqual({
     alpha: { model: "opencode/nemotron-3-ultra-free" },
     beta: { model: "opencode/nemotron-3.5-lightning-free" },

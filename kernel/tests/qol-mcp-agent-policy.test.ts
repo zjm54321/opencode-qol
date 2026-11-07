@@ -5,9 +5,11 @@ import defaults from "../defaults/oh-my-opencode-slim.json";
 import { createBundledMcpPlugin, type BundledServers } from "../plugins/bundled-mcp/src/plugin.ts";
 import type { Context } from "@opencode/plugin/promise/plugin";
 import { mergePluginConfigs } from "../vendor/oh-my-opencode-slim/src/config/loader.ts";
+import { resolveFeatureGates } from "../vendor/oh-my-opencode-slim/src/config/feature-gates.ts";
+import { PluginConfigSchema } from "../vendor/oh-my-opencode-slim/src/config/schema.ts";
 import { compilePermissionPolicy } from "../vendor/oh-my-opencode-slim/src/v2/permissions.ts";
 import { createV2Setup } from "../vendor/oh-my-opencode-slim/src/v2/setup.ts";
-import type { V2Context, V2PermissionRule } from "../vendor/oh-my-opencode-slim/src/v2/types.ts";
+import type { V2Context, V2PermissionRule, V2ToolDefinition } from "../vendor/oh-my-opencode-slim/src/v2/types.ts";
 import { flushLoggerForTesting } from "../vendor/oh-my-opencode-slim/src/utils/logger.ts";
 
 // Real Slim factory/setup/registry/adapters run against a narrow host-domain
@@ -61,6 +63,7 @@ async function setup(options: {
   override?: Parameters<typeof mergePluginConfigs>[1];
   hostMcps?: Record<string, McpConfig>;
   bundledFirst?: boolean;
+  builtBundle?: boolean;
 } = {}) {
   const directory = path.join(fixture, "project");
   await mkdir(path.join(directory, ".opencode"), { recursive: true });
@@ -79,6 +82,7 @@ async function setup(options: {
     for (const transform of transforms) transform(draft);
   };
   const agents = new Map<string, Agent>();
+  const tools = new Map<string, V2ToolDefinition>();
   const registration = () => ({ dispose: async () => {} });
   const nativeSubagent = { description: "Native subagent", execute: async () => ({}) };
   const stored = new Map<string, unknown>();
@@ -117,25 +121,35 @@ async function setup(options: {
     tool: {
       transform: async (callback: (draft: unknown) => void) => {
         callback({ get: (name: string) => name === "subagent" ? nativeSubagent : undefined,
-          update: (name: string, update: (tool: typeof nativeSubagent) => void) => { if (name === "subagent") update(nativeSubagent); }, add() {} });
+          update: (name: string, update: (tool: typeof nativeSubagent) => void) => { if (name === "subagent") update(nativeSubagent); },
+          add: (tool: V2ToolDefinition) => { tools.set(tool.name, tool); } });
         return registration();
       }, hook: async () => registration(),
     },
     command: { transform: async (callback: (draft: unknown) => void) => { callback({ add() {} }); return registration(); }, list: async () => [] },
     skill: { transform: async () => registration(), list: async () => [], reload: async () => {} },
-    session: { get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, directory, agent: "orchestrator" }), hook: async () => registration() },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, directory, agent: "orchestrator" }),
+      update: async () => {},
+      hook: async () => registration(),
+    },
     event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
     generate: { text: async () => ({ text: "unused" }) },
   };
   const bundledSetup = () => createBundledMcpPlugin(bundled).setup(ctx as unknown as Context);
-  const slimSetup = () => createV2Setup()(ctx as unknown as V2Context);
+  const slimSetup = async () => {
+    const start = options.builtBundle
+      ? (await import("../vendor/oh-my-opencode-slim/dist/server/index.js")).default.setup
+      : createV2Setup();
+    return start(ctx as unknown as V2Context);
+  };
   const ordered = options.bundledFirst === false ? [slimSetup, bundledSetup] : [bundledSetup, slimSetup];
   for (const start of ordered) {
     const cleanup = await start();
     if (cleanup) cleanups.push(cleanup);
   }
   return {
-    agents, snapshots, mcps,
+    agents, tools, snapshots, mcps,
     policy(agent: string) {
       const rules = agents.get(agent)?.permissions;
       expect(rules).toBeArray();
@@ -145,6 +159,88 @@ async function setup(options: {
 }
 
 describe("bundled MCP → real Slim V2 agent policy (host-domain harness, not catalog E2E)", () => {
+  test("all presets and council defaults validate with conservative OMO feature gates", () => {
+    const parsed = PluginConfigSchema.parse(defaults);
+    expect(Object.keys(parsed.presets ?? {}).sort()).toEqual(["default", "default_with_fallback", "free", "openai"]);
+    expect(Object.keys(parsed.council?.presets ?? {}).sort()).toEqual(["default", "default_with_fallback", "free", "openai"]);
+    expect(defaults).not.toHaveProperty("marketplacePresets");
+    for (const preset of Object.values(defaults.presets)) {
+      expect(preset.marketplace.agents).toEqual(["alvin/documenter"]);
+    }
+    expect(defaults.backgroundJobs).not.toHaveProperty("mode");
+    expect(resolveFeatureGates(parsed)).toEqual({
+      backgroundJobsMode: "managed", managedJobs: true,
+      tui: true, sidebar: true, interview: true, marketplace: true,
+      liveConfigRefresh: true, updateChecker: false,
+    });
+  });
+
+  test.each(["free", "default", "default_with_fallback", "openai"])(
+    "the built OMO bundle activates documenter for preset %s",
+    async preset => {
+      const h = await setup({ builtBundle: true, override: { preset } });
+      expect(h.agents.get("documenter")?.mode).toBe("subagent");
+      const tool = h.tools.get("marketplace_inspect");
+      expect(tool).toBeDefined();
+      const result = await tool!.execute({ action: "status" }, {
+        sessionID: "ses_marketplace_policy", agent: "orchestrator", messageID: "msg_marketplace_policy", id: "tool_marketplace_policy",
+      } as Parameters<V2ToolDefinition["execute"]>[1]);
+      const status = JSON.parse(result.content);
+      expect(status.desiredPackageIds).toEqual(["alvin/documenter"]);
+      expect(status.livePackages).toContainEqual(expect.objectContaining({ id: "alvin/documenter" }));
+      expect(status.diagnostics).toEqual([]);
+    },
+  );
+
+  test("custom primaries retain their delegation scope through QoL defaults and real V2 setup", async () => {
+    const override = {
+      agents: {
+        coworker: {
+          primary: true,
+          subagents: ["explorer", "fixer"],
+          model: "openai/gpt-6.1-sol",
+          skills: ["modern-python"],
+          mcps: ["codegraph"],
+        },
+      },
+    };
+    const parsed = PluginConfigSchema.parse(mergePluginConfigs(defaults, override));
+    expect(parsed.agents?.coworker?.primary).toBe(true);
+    expect(parsed.agents?.coworker?.subagents).toEqual(["explorer", "fixer"]);
+    const h = await setup({ override });
+    expect(h.agents.get("coworker")?.mode).toBe("primary");
+    const policy = h.policy("coworker");
+    for (const tool of ["task_cancel", "task_revive", "wait_for_user", "marketplace_inspect", "marketplace_manage"]) {
+      expect(policy.decide(tool, "*")).toBe("allow");
+    }
+    // The native V2 host calls this tool `subagent`; OMO compiles V1 task stances to it.
+    expect(policy.decide("subagent", "explorer")).toBe("allow");
+    expect(policy.decide("subagent", "fixer")).toBe("allow");
+    expect(policy.decide("subagent", "designer")).toBe("deny");
+    expect(policy.decide("task_report", "*")).toBe("deny");
+    expect(policy.decide(actions.codegraph, "*")).toBe("allow");
+    expect(policy.decide(actions.nixos, "*")).toBe("deny");
+  });
+
+  test("the built OMO bundle loads a scoped custom primary and registers task_report directly", async () => {
+    const h = await setup({
+      builtBundle: true,
+      override: { agents: { coworker: { primary: true, subagents: ["explorer", "fixer"], model: "openai/gpt-6.1-sol" } } },
+    });
+    expect(h.agents.get("coworker")?.mode).toBe("primary");
+    expect(h.policy("coworker").decide("subagent", "explorer")).toBe("allow");
+    expect(h.policy("coworker").decide("subagent", "fixer")).toBe("allow");
+    expect(h.policy("coworker").decide("subagent", "designer")).toBe("deny");
+    const report = h.tools.get("task_report");
+    expect(report?.options?.codemode).toBe(false);
+    expect(report?.input).toMatchObject({
+      type: "object", required: ["kind", "message"],
+      properties: { kind: { enum: ["progress", "escalation"] }, message: { minLength: 1, maxLength: 2000 } },
+    });
+    expect(h.policy("coworker").decide("task_report", "*")).toBe("deny");
+    expect(h.policy("fixer").decide("task_report", "*")).toBe("allow");
+  });
+
   test("locks the actual builtin setup order and admits all four MCPs to explorer", async () => {
     const source = await readFile(new URL("../src/builtin.ts", import.meta.url), "utf8");
     const order = source.match(/QolPlugins[^=]*=\s*\[([\s\S]*?)\]/)?.[1];

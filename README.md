@@ -1,6 +1,6 @@
 # OpenCode QoL
 
-OpenCode Quality of Life (QoL) 是一款面向生产环境的 OpenCode 完整工程化整合包（Monorepo）。它将固定版本的 OpenCode 核心 (v2.2.5)、原生 Persistent PTY、内置工程级插件群、生态增强套件（Oh My OpenCode Slim、Billion Context ACP）以及精选的专业技能库（Built-in Skills）由 Nix 统一构建进单一确定性闭包，免除任何运行时 npm/bun 安装或外部网络下载。当前面向 `x86_64-linux`。
+OpenCode Quality of Life (QoL) 是一款面向生产环境的 OpenCode 完整工程化整合包（Monorepo）。当前整合版本为 **v2.2.5-qol.2**，将固定版本的 OpenCode 核心 (v2.2.5)、原生 Persistent PTY、内置工程级插件群、生态增强套件（Oh My OpenCode Slim、Billion Context ACP）以及精选的专业技能库（Built-in Skills）由 Nix 统一构建进单一确定性闭包，免除任何运行时 npm/bun 安装或外部网络下载。当前面向 `x86_64-linux`。
 
 ---
 
@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/zjm54321/opencode-qol/main/scripts/
 ```sh
 nix build
 bun test
-bash scripts/install.sh --version v2.2.5-qol
+bash scripts/install.sh --version v2.2.5-qol.2
 # 离线 Linux 安装：
 bash scripts/install.sh --archive ./opencode-linux-x64.tar.gz
 ```
@@ -131,6 +131,25 @@ Set-Location .\clients\windows
   - `orchestrator`：通用全集通配，严格负向排除所有专家独占技能；专属 MCP：`codegraph`、`nixos`。
 - **清理收敛**：彻底移除冗余及非必要配置与 Agent（如 secretary、observer 等），所有 QoL 内部插件命名统一为 `opencode.qol.*`。
 
+### 5. 自定义主 Agent（OMO 3.0.7）
+用户或项目的 `oh-my-opencode-slim.json` 可增量添加主 Agent 与委派范围；无需修改内置预设：
+
+```json
+{
+  "agents": {
+    "coworker": {
+      "primary": true,
+      "model": "opencode/deepseek-v4.1-flash-free",
+      "subagents": ["explorer", "fixer"]
+    }
+  }
+}
+```
+
+在 `opencode.json` 设置 `"default_agent": "coworker"` 可改变默认入口。`subagents` 编译为原生 `subagent` 工具的权限范围，显式 `permission.task` 优先；QoL 仍默认使用 managed 后台任务模式。OpenCode v2 的唤醒与完成通知由宿主负责，OMO 的 `backgroundJobs.orchestratorWake` 仅适用于 v1。`alvin/validator`（Agent ID：`validator`）是可选 Marketplace 包，不随本包自动安装或启用。
+
+OMO 3.0.7 的 Marketplace 激活配置使用 `presets.<预设名>.marketplace`；根级 `marketplacePresets` 是加载器内部的解析结果，不是有效输入字段。四个内置预设均通过 `marketplace.agents: ["alvin/documenter"]` 激活闭包中的 Documenter。
+
 ---
 
 ## 构建与运行
@@ -176,12 +195,12 @@ programs.opencode-qol = {
 
 ## 架构与范围说明
 
-- **Monorepo 内置闭包**：自有内置插件（`clear-encrypted`, `session-reader`, `opencode-desktop-bridge`）在 `kernel/plugins/` 本地维护并归属 QoL 项目；`oh-my-opencode-slim@3.0.6` 与 `billion-context@0.1.210` 构建期统一锁定并收录到产物的 `vendor/`，无运行时 npm 安装。
+- **Monorepo 内置闭包**：自有内置插件（`clear-encrypted`, `session-reader`, `opencode-desktop-bridge`）在 `kernel/plugins/` 本地维护并归属 QoL 项目；`oh-my-opencode-slim@3.0.7` 与 `billion-context@0.1.212` 构建期统一锁定并收录到产物的 `vendor/`，无运行时 npm 安装。
 - **原生图像生成**：使用 OpenCode 的 `experimental_image_generate`，不再内置独立图片执行插件。图像模型在 `providers.<provider>.models` 中声明 `type: "image"`，复用标准 provider 认证与端点；可用 `experimental.image_generate.model` 指定默认模型。旧 `imagegen.json` 不再参与配置。`image-generation` 技能独立维护于 `kernel/defaults/skills/image-generation/`，保留提示词参考，执行流程遵循原生工具。
-- **官方 PTY 归一**：`kernel/src/native-pty.ts` 复用 `PersistentPty.Service` 与原生终端面板；`pty_read` 读取守护进程保留的最近 2 MiB 输出，支持分页和正则检索，不另建日志存储。工具终端退出后保留输出，清理或守护进程结束后释放；退出通知使用原生 synthetic 消息。
+- **官方 PTY 归一**：`kernel/src/native-pty.ts` 复用 `PersistentPty.Service` 与原生终端面板；`pty_read` 读取守护进程保留的最近 2 MiB 输出，支持分页和正则检索，不另建日志存储。工具终端退出后保留输出，清理或守护进程结束后释放；退出通知使用原生 synthetic 消息。守护进程保留核心 v2.2.5 配套的 0.4.0 与匹配的 Ghostty；0.5.0 的 Process/Pipe 协议与当前核心客户端不兼容，暂不升级。
 - **桌面桥接边界**：Linux 闭包仅提供 `opencode-desktop-bridge` 插件包并采用新 RPC 标识，不保留旧名称兼容；Windows 原生前端独立位于 `clients/windows/`。
 - **随包 MCP**：Codegraph `1.6.2` 与 NixOS MCP `3.0.2` 的 stdio 服务程序随 Nix 闭包提供，内置插件自动注册；显式同名配置优先。Codegraph 索引由使用者创建，启动不自动索引项目。Context7 与 GitHub grep 沿用 Slim 的远程 MCP 定义。
-- **QoL 标识**：首页显示小号 `qol`；版本展示动态追加 `-qol`，不改变上游版本、更新通道或状态目录。Sunburst 生成字标位于 `assets/branding/`，随包安装到 `share/opencode-qol/branding/`。
+- **QoL 标识**：首页显示小号 `qol`；版本展示动态追加 `-qol.2`，不改变上游版本、更新通道或状态目录。Sunburst 生成字标位于 `assets/branding/`，随包安装到 `share/opencode-qol/branding/`。
 - **构建与验证**：当前未配置发布缓存，无缓存时由 Nix 本地构建。源码与契约测试覆盖真实 PTY 守护进程、清理插件的临时数据库以及会话服务发现。整包验收还检查 CLI 版本、宿主插件注册及本地 MCP 连接；具体结果以交付时的构建与运行记录为准。本仓库不会自动部署到现用系统。
 
 ## 许可证与出处归属

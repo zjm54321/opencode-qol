@@ -17,9 +17,10 @@
 # 均能被正确识别并走入合法的忽略/回退分支，保证 QoL 插件加载体系的绝对鲁棒性。
 # ==============================================================================
 diff --git a/packages/plugin/src/host.ts b/packages/plugin/src/host.ts
+index 8e8d776..3e7d4f6 100644
 --- a/packages/plugin/src/host.ts
 +++ b/packages/plugin/src/host.ts
-@@ -24,7 +24,8 @@ export function resolve(target: Target): Entrypoints {
+@@ -37,7 +37,8 @@ export function resolve(input: Target): Entrypoints {
          return resolveModule(specifier, target.directory)
        } catch (error) {
          if (

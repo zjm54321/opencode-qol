@@ -1,8 +1,9 @@
 {
-  "$schema": "https://unpkg.com/oh-my-opencode-slim@3.0.6/oh-my-opencode-slim.schema.json",
+  "$schema": "https://unpkg.com/oh-my-opencode-slim@3.0.7/oh-my-opencode-slim.schema.json",
   "autoUpdate": false,
   "presets": {
     "free": {
+      "marketplace": { "agents": ["alvin/documenter"] },
       "orchestrator": {
         "model": "opencode/glm-5.3-flash-free",
         "variant": "max",
@@ -61,6 +62,7 @@
       }
     },
     "default": {
+      "marketplace": { "agents": ["alvin/documenter"] },
       "orchestrator": {
         "model": "anthropic/claude-opus-5-5",
         "variant": "high",
@@ -163,6 +165,7 @@
       }
     },
     "default_with_fallback": {
+      "marketplace": { "agents": ["alvin/documenter"] },
       "orchestrator": {
         "model": [
           { "id": "anthropic/claude-opus-5-5", "variant": "high" },
@@ -293,6 +296,7 @@
       }
     },
     "openai": {
+      "marketplace": { "agents": ["alvin/documenter"] },
       "orchestrator": {
         "model": "openai/gpt-6.1-sol",
         "variant": "xhigh",
@@ -393,26 +397,6 @@
           "codegraph"
         ]
       }
-    }
-  },
-  "marketplacePresets": {
-    "free": {
-      "agents": ["alvin/documenter"]
-    },
-    "default": {
-      "agents": [
-        "alvin/documenter"
-      ]
-    },
-    "default_with_fallback": {
-      "agents": [
-        "alvin/documenter"
-      ]
-    },
-    "openai": {
-      "agents": [
-        "alvin/documenter"
-      ]
     }
   },
   "council": {

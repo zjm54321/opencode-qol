@@ -53,25 +53,27 @@ afterAll(async () => {
 });
 
 describe("display version", () => {
-  test("appends -qol exactly once to the real base version", () => {
-    expect(mod.qolVersion("2.2.5")).toBe("2.2.5-qol");
-    expect(mod.qolVersion("2.2.5-qol")).toBe("2.2.5-qol");
-    expect(mod.qolVersion(mod.qolVersion("2.2.5"))).toBe("2.2.5-qol");
-    expect(mod.qolVersion("v2.2.5")).toBe("2.2.5-qol");
-    expect(mod.qolVersion("local")).toBe("local-qol");
+  test("appends the current QoL revision exactly once to the real base version", () => {
+    expect(mod.qolVersion("2.2.5")).toBe("2.2.5-qol.2");
+    expect(mod.qolVersion("2.2.5-qol")).toBe("2.2.5-qol.2");
+    expect(mod.qolVersion("2.2.5-qol.1")).toBe("2.2.5-qol.2");
+    expect(mod.qolVersion("2.2.5-qol.2")).toBe("2.2.5-qol.2");
+    expect(mod.qolVersion(mod.qolVersion("2.2.5"))).toBe("2.2.5-qol.2");
+    expect(mod.qolVersion("v2.2.5")).toBe("2.2.5-qol.2");
+    expect(mod.qolVersion("local")).toBe("local-qol.2");
     expect(mod.qolVersion("")).toBe("");
   });
 
   test("follows a future core bump instead of pinning a number", () => {
-    expect(mod.qolVersion("2.2.0")).toBe("2.2.0-qol");
-    expect(mod.qolVersionLabel("2.2.0")).toBe("v2.2.0-qol");
+    expect(mod.qolVersion("2.2.0")).toBe("2.2.0-qol.2");
+    expect(mod.qolVersionLabel("2.2.0")).toBe("v2.2.0-qol.2");
     for (const line of patch.split("\n").filter((l) => l.startsWith("+"))) expect(line).not.toMatch(/\d+\.\d+\.\d+/);
   });
 
-  test("visible label is v2.2.5-qol and never doubles the v or suffix", () => {
-    expect(mod.qolVersionLabel("2.2.5")).toBe("v2.2.5-qol");
-    expect(mod.qolVersionLabel("v2.2.5-qol")).toBe("v2.2.5-qol");
-    expect(mod.qolVersionLabel("local")).toBe("local-qol");
+  test("visible label is v2.2.5-qol.2 and never doubles the v or suffix", () => {
+    expect(mod.qolVersionLabel("2.2.5")).toBe("v2.2.5-qol.2");
+    expect(mod.qolVersionLabel("v2.2.5-qol.2")).toBe("v2.2.5-qol.2");
+    expect(mod.qolVersionLabel("local")).toBe("local-qol.2");
   });
 
   test("only display sites use the suffix; OPENCODE_VERSION stays the real base", () => {

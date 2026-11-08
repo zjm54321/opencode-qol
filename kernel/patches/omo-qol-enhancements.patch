@@ -3,7 +3,7 @@
 # 模块: vendor/oh-my-opencode-slim (src/cli/custom-skills-registry.ts, src/marketplace/store.ts)
 #
 # 【改动内容】
-# 1. 内置技能集中注册：在 custom-skills-registry.ts 中追加声明由 Nix Flake 固化的 20 项专业与工程
+# 1. 内置技能集中注册：在 custom-skills-registry.ts 中追加声明由 Nix Flake 固化的 21 项专业与工程
 #    技能（包括 start-work, skill-creator, web-perf, ui-ux-pro-max, humanizer-zh 等），并精准分配
 #    各 Agent 的允许列表（allowedAgents）。
 # 2. Marketplace 技能预检由上游 3.0.7 原生 skill.list() 负责；Nix defaults/skills 已注册到宿主技能目录。
@@ -23,7 +23,7 @@ diff --git a/src/cli/custom-skills-registry.ts b/src/cli/custom-skills-registry.
 index 0eb6a43..1244c4b 100644
 --- a/src/cli/custom-skills-registry.ts
 +++ b/src/cli/custom-skills-registry.ts
-@@ -93,4 +93,124 @@ export const CUSTOM_SKILLS: CustomSkill[] = [
+@@ -93,4 +93,130 @@ export const CUSTOM_SKILLS: CustomSkill[] = [
      allowedAgents: ['orchestrator'],
      sourcePath: 'src/skills/worktrees',
    },
@@ -50,6 +50,12 @@ index 0eb6a43..1244c4b 100644
 +    description: 'Generate or edit images with AI models',
 +    allowedAgents: ['orchestrator', 'designer'],
 +    sourcePath: 'src/skills/image-generation',
++  },
++  {
++    name: 'native-ui',
++    description: 'Render user-requested interactive or structured FluentCode cards with native_ui',
++    allowedAgents: ['orchestrator'],
++    sourcePath: 'src/skills/native-ui',
 +  },
 +  {
 +    name: 'skill-creator',

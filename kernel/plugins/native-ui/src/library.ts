@@ -15,7 +15,7 @@ const align = z.enum(["start", "center", "end", "stretch"]);
 const reactive = <T extends z.ZodType>(schema: T): T => { markReactive(schema); return schema; };
 const option = z.union([z.string(), z.object({ value: z.string(), label: z.string() })]);
 
-// One definition list feeds validation, the official prompt builder and the generated C# manifest.
+// One definition list feeds validation, the generated skill reference and the C# manifest.
 // Renderers are deliberately absent: this server never renders or executes model-written code.
 export const sliceComponents = [
   defineComponent({ name: "Col", props: z.object({ children, gap: z.number().optional(), align: align.optional() }), description: "Vertical layout.", component: null }),

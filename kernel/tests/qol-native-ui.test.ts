@@ -5,6 +5,9 @@ import { description } from "../plugins/native-ui/src/prompt.ts";
 import { componentReference, examples } from "../plugins/native-ui/src/reference.ts";
 import { failureText, validateSource } from "../plugins/native-ui/src/validate.ts";
 import { catalogManifest } from "../plugins/native-ui/scripts/generate-catalog.ts";
+import { skillReference } from "../plugins/native-ui/scripts/generate-skill-reference.ts";
+
+const skillRoot = new URL("../defaults/skills/native-ui/", import.meta.url);
 
 mock.module("@opencode/plugin", () => ({ Plugin: { define: (definition: unknown) => definition } }));
 const { default: plugin } = await import("../plugins/native-ui/src/index.ts");
@@ -83,14 +86,15 @@ describe("native_ui official parser validation", () => {
     for (const chunk of source.match(/.{1,7}|\n/g) ?? []) stream.push(chunk);
     expect(stream.getResult(true)).toEqual(createParser(librarySchema, library.root).parse(source));
   });
-  test("manifest and prompt use the same ordered catalog definitions", async () => {
+  test("manifest preserves the ordered catalog and the lean tool description routes to the skill", async () => {
     expect(await Bun.file(new URL("../plugins/native-ui/catalog.json", import.meta.url)).json()).toEqual(catalogManifest());
     expect(catalogManifest().components.Slider.props.map(prop => prop.name)).toEqual(["value", "min", "max", "step", "label", "unit", "marks"]);
     expect(catalogManifest().components.Input.props[0].reactive).toBe(true);
     expect(description).toContain("@ToAssistant");
     expect(description).toContain("ordinary prose");
     expect(description).toContain("未支持");
-    expect(description.length).toBeLessThan(14_000);
+    expect(description).toContain("Load the native-ui skill before your first native_ui call");
+    expect(description.length).toBeLessThan(2_000);
   });
   test("FluentCode embeds a byte-identical catalog and all demos validate on the server", async () => {
     const fluent = process.env.NUI_FLUENTCODE_ROOT ?? "/mnt/c/src/fluentcode-lanes/native-ui-v1";
@@ -115,9 +119,10 @@ describe("native_ui official parser validation", () => {
     }
     expect(() => componentReference(["HtmlView"])).toThrow("Unknown native component");
     expect(validateSource('root = Button("Open", @OpenUrl("https://example.org"))').ok).toBe(true);
-    expect(failureText([])).toContain("native_ui_reference");
+    expect(failureText([])).toContain("load the native-ui skill");
+    expect(failureText([])).toContain("references/error-recovery.md");
   });
-  test("button sizing is selectable and the on-demand reference explains adaptive keypads", () => {
+  test("button sizing is selectable and the generated reference explains adaptive keypads", () => {
     for (const size of ["sm", "md", "lg"]) {
       expect(validateSource(`root = Button("Key", null, "soft", null, "${size}")`).ok).toBe(true);
       expect(validateSource(`root = IconButton("plus", null, "Add", "outline", "${size}")`).ok).toBe(true);
@@ -133,6 +138,44 @@ describe("native_ui official parser validation", () => {
     expect(componentReference(["Video", "Audio", "ImageGallery"])).toContain("HTTPS");
     expect(componentReference(["YouTube"])).toContain("in-app browser");
   });
+
+  test("the shipped skill catalog is generated from all 57 validator schemas without drift", async () => {
+    const reference = await Bun.file(new URL("references/components.md", skillRoot)).text();
+    expect(reference).toBe(skillReference());
+    expect(Object.keys(examples).sort()).toEqual(Object.keys(library.components).sort());
+    expect([...reference.matchAll(/^## (\w+)$/gm)].map(match => match[1]).filter(name => library.components[name])).toEqual(Object.keys(library.components));
+    for (const [name, component] of Object.entries(catalogManifest().components)) {
+      const section = reference.split(`## ${name}\n`)[1]!.split("\n## ")[0]!;
+      expect(section).toContain(`${name}(${component.props.map(prop => prop.name).join(", ")})`);
+      for (const prop of component.props) expect(section).toContain(`- \`${prop.name}${prop.required ? "" : "?"}\`${prop.reactive ? " **reactive**" : ""}: \`${JSON.stringify(prop.type)}\``);
+    }
+  });
+
+  test("every fenced example in every skill document passes the real native UI validator", async () => {
+    const files = [...new Bun.Glob("**/*.md").scanSync(skillRoot.pathname)].sort();
+    const programs: { file: string; source: string }[] = [];
+    for (const file of files) {
+      const markdown = await Bun.file(new URL(file, skillRoot)).text();
+      for (const match of markdown.matchAll(/```([^\n]*)\n([\s\S]*?)```/g)) {
+        expect(match[1]).toBe("openui");
+        programs.push({ file, source: match[2]!.trim() });
+      }
+    }
+    expect(files).toHaveLength(6);
+    expect(programs).toHaveLength(Object.keys(library.components).length + 11);
+    for (const { file, source } of programs) expect({ file, source, ...validateSource(source) }).toMatchObject({ ok: true });
+  });
+
+  test("the skill entrypoint declares the FluentCode tool requirement and links all manuals", async () => {
+    const markdown = await Bun.file(new URL("SKILL.md", skillRoot)).text();
+    expect(markdown).toMatch(/^---\nname: native-ui\ndescription: .*FluentCode.*native_ui/m);
+    expect(markdown).toContain("before the first native_ui call");
+    expect(markdown).toContain("not for plain answers, code or unsolicited UI");
+    expect(markdown).toContain("normal composer");
+    const links = [...markdown.matchAll(/\]\((references\/[^)]+\.md)\)/g)].map(match => match[1]!);
+    expect(links.sort()).toEqual(["references/behavior-and-design.md", "references/components.md", "references/error-recovery.md", "references/examples.md", "references/language.md"]);
+    for (const link of links) expect(await Bun.file(new URL(link, skillRoot)).exists()).toBe(true);
+  });
 });
 
 test("tool registration fails bad input, avoids echoing data, restricts non-primary agents and disposes", async () => {
@@ -147,10 +190,9 @@ test("tool registration fails bad input, avoids echoing data, restricts non-prim
     tool: { transform: async (callback: any) => { callback({ add: (tool: any) => { registrations.push(tool); } }); return { dispose: async () => { toolDisposed++; } }; } },
     agent: { transform: async (callback: any) => { callback({ list: () => agents, update: (id: string, fn: any) => fn(agents.find(agent => agent.id === id)) }); return { dispose: async () => { agentDisposed++; } }; } },
   } as any);
-  const [registered, reference] = registrations;
+  const [registered] = registrations;
+  expect(registrations.map(tool => tool.name)).toEqual(["native_ui"]);
   expect(registered.name).toBe("native_ui");
-  expect(reference.name).toBe("native_ui_reference");
-  expect((await reference.execute({ components: ["Chart", "Table"] }, { signal: new AbortController().signal })).content).toContain("Chart(type, data");
   expect(registered.options).toEqual({ codemode: false, permission: "native_ui" });
   const signal = new AbortController().signal;
   await expect(registered.execute({ source: 'root = HtmlView("bad")' }, { signal })).rejects.toThrow("line 1, column");
@@ -159,7 +201,7 @@ test("tool registration fails bad input, avoids echoing data, restricts non-prim
   expect(result.content.length).toBeLessThan(100);
   expect(result.metadata.nativeUi.title).toBe("Example");
   expect(agents[0].permissions).toEqual([]);
-  for (const agent of agents.slice(1)) expect(agent.permissions).toEqual([{ action: "native_ui", resource: "*", effect: "deny" }, { action: "native_ui_reference", resource: "*", effect: "deny" }]);
+  for (const agent of agents.slice(1)) expect(agent.permissions).toEqual([{ action: "native_ui", resource: "*", effect: "deny" }, { action: "skill", resource: "native-ui", effect: "deny" }]);
   await dispose();
   expect([toolDisposed, agentDisposed]).toEqual([1, 1]);
 });

@@ -114,7 +114,7 @@ if (process.env.QOL_SKILLS_CONFIG) {
   }
 
   // Local repository skills
-  for (const name of ["start-work", "image-generation"]) {
+  for (const name of ["start-work", "image-generation", "native-ui"]) {
     const src = path.join(repository, "defaults/skills", name)
     await copy(src, path.join(assets, "vendor/oh-my-opencode-slim/src/skills", name))
   }

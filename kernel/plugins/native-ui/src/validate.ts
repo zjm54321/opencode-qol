@@ -245,5 +245,5 @@ export function validateSource(source: string): Validation {
 }
 
 export function failureText(errors: Diagnostic[]): string {
-  return "native_ui validation failed. Fix and retry; call native_ui_reference({components:[...]}) for full positional prop docs and examples:\n" + errors.map(error => `line ${error.line}, column ${error.column} [${error.code}]: ${error.message}`).join("\n");
+  return "native_ui validation failed. Fix and retry; load the native-ui skill and consult references/components.md and references/error-recovery.md for positional prop docs, examples and diagnostic fixes:\n" + errors.map(error => `line ${error.line}, column ${error.column} [${error.code}]: ${error.message}`).join("\n");
 }

@@ -6,7 +6,7 @@ import { examples } from "../src/reference.ts";
 export function catalogManifest() {
   if (library.components.HtmlView) throw new Error("HtmlView cannot enter the native catalog");
   for (const name of Object.keys(library.components)) {
-    if (!examples[name]) throw new Error(`Missing on-demand reference example: ${name}`);
+    if (!examples[name]) throw new Error(`Missing component reference example: ${name}`);
   }
   return {
     formatVersion: 1,

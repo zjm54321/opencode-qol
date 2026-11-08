@@ -92,11 +92,11 @@ describe("native_ui official parser validation", () => {
     expect(description).toContain("未支持");
     expect(description.length).toBeLessThan(14_000);
   });
-  test("FluentCode embeds a byte-identical catalog and all six demos validate on the server", async () => {
+  test("FluentCode embeds a byte-identical catalog and all demos validate on the server", async () => {
     const fluent = process.env.NUI_FLUENTCODE_ROOT ?? "/mnt/c/src/fluentcode-lanes/native-ui-v1";
     expect(await Bun.file(`${fluent}/src/FluentCode/Services/NativeUi/catalog.json`).text()).toBe(await Bun.file(new URL("../plugins/native-ui/catalog.json", import.meta.url)).text());
-    for (const name of ["calculator", "budget", "assistant", "dashboard", "form", "mixed"]) {
-      const checked = validateSource(await Bun.file(`${fluent}/tests/native-ui/fixtures/demo-${name}.oui`).text());
+    for (const name of new Bun.Glob("demo-*.oui").scanSync(`${fluent}/tests/native-ui/fixtures`)) {
+      const checked = validateSource(await Bun.file(`${fluent}/tests/native-ui/fixtures/${name}`).text());
       expect(checked).toMatchObject({ ok: true });
     }
   });
@@ -116,6 +116,15 @@ describe("native_ui official parser validation", () => {
     expect(() => componentReference(["HtmlView"])).toThrow("Unknown native component");
     expect(validateSource('root = Button("Open", @OpenUrl("https://example.org"))').ok).toBe(true);
     expect(failureText([])).toContain("native_ui_reference");
+  });
+  test("button sizing is selectable and the on-demand reference explains adaptive keypads", () => {
+    for (const size of ["sm", "md", "lg"]) {
+      expect(validateSource(`root = Button("Key", null, "soft", null, "${size}")`).ok).toBe(true);
+      expect(validateSource(`root = IconButton("plus", null, "Add", "outline", "${size}")`).ok).toBe(true);
+    }
+    expect(componentReference(["Button", "IconButton"])).toContain("sm=32px, md=40px, lg=48px");
+    expect(componentReference(["Button"])).toContain("0.8× column width, clamped to 40–56px");
+    expect(catalogManifest().components.IconButton.props.map(prop => prop.name)).toEqual(["icon", "action", "label", "variant", "size"]);
   });
 });
 

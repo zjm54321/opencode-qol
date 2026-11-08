@@ -18,6 +18,7 @@ export function componentReference(names: string[]): string {
     if (!component) throw new Error(`Unknown native component '${name}'. Use a name from the native_ui index (HtmlView is excluded).`);
     const schema = librarySchema.$defs![name]!;
     const props = Object.entries(component.props.shape).map(([key, prop]) => `${key}${schema.required?.includes(key) ? "" : "?"}: ${JSON.stringify(schema.properties![key])}`);
-    return `${name}(${Object.keys(component.props.shape).join(", ")})\n${schema.description ?? "Native component."}\nProps in positional order:\n${props.join("\n")}\nExample:\n${examples[name]}`;
+    const sizing = name === "Button" || name === "IconButton" ? "\nNative sizing: sm=32px, md=40px, lg=48px. Buttons fill Grid cells and button-only Rows. For calculator keys (labels of 1–2 characters), omit size to adapt height to 0.8× column width, clamped to 40–56px. Explicit size always wins." : "";
+    return `${name}(${Object.keys(component.props.shape).join(", ")})\n${schema.description ?? "Native component."}${sizing}\nProps in positional order:\n${props.join("\n")}\nExample:\n${examples[name]}`;
   }).join("\n\n");
 }

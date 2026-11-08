@@ -2,6 +2,7 @@
 import { library, librarySchema } from "./library.ts";
 
 export const examples: Record<string, string> = {
+  Video: 'root = Video("https://media.example.org/demo.mp4", "Product tour", 320)', Audio: 'root = Audio("https://media.example.org/intro.mp3", "Introduction")', ImageGallery: 'root = ImageGallery([{src:"https://example.org/one.png",alt:"Overview"},{src:"https://example.org/two.png",alt:"Detail"}], "Gallery", 320)',
   Col: 'root = Col([Text("Hello"), Caption("Ready")])', Row: 'root = Row([Text("Left"), Spacer(), Text("Right")])', Card: 'root = Card([Caption("Revenue"), Title("¥12,000", "2xl")], "soft")', Divider: 'root = Col([Text("Before"), Divider(), Text("After")])',
   Title: 'root = Title("Summary", "lg")', Text: 'root = Text(["Ready ", Badge("OK")])', Caption: 'root = Caption("Updated today")', Badge: 'root = Badge("Complete", "success", "check")', Markdown: 'root = Markdown("## Notes\\n- Native controls")',
   Button: '$n = 0\nroot = Col([Text("Count: " + $n), Button("Add", @Set($n, $n + 1))])', Input: '$name = ""\nroot = Col([Input($name, "Name"), Text("Hello " + $name)])', Select: '$v = "A"\nroot = Col([Select($v, ["A", "B"], "Plan"), Text($v)])', Slider: '$n = 2\nroot = Col([Slider($n, 1, 10, 1, "Quantity"), Text("Total: " + $n * 12)])', Checkbox: '$done = false\nroot = Col([Checkbox($done, "Done"), Text($done ? "Ready" : "Pending")])',

@@ -105,7 +105,7 @@ describe("native_ui official parser validation", () => {
     expect(validateSource('root = Text("bad\\q")').ok).toBe(false);
   });
   test("full catalog reference examples validate and expose complete positional docs", () => {
-    expect(Object.keys(library.components)).toHaveLength(54);
+    expect(Object.keys(library.components)).toHaveLength(57);
     expect(library.components.HtmlView).toBeUndefined();
     for (const name of Object.keys(library.components)) {
       expect(examples[name]).toBeDefined();
@@ -125,6 +125,13 @@ describe("native_ui official parser validation", () => {
     expect(componentReference(["Button", "IconButton"])).toContain("sm=32px, md=40px, lg=48px");
     expect(componentReference(["Button"])).toContain("0.8× column width, clamped to 40–56px");
     expect(catalogManifest().components.IconButton.props.map(prop => prop.name)).toEqual(["icon", "action", "label", "variant", "size"]);
+  });
+  test("map coordinates and native media URLs remain bounded and explicitly loaded", () => {
+    for (const source of ['root = Video("https://example.org/v.mp4", "Video", 300)', 'root = Audio("https://example.org/a.mp3", "Audio")', 'root = ImageGallery([{src:"https://example.org/a.png",alt:"A"}], "Gallery", 320)', 'root = Map([MapMarker("Beijing",39.908823,116.39747)], true)']) expect(validateSource(source).ok).toBe(true);
+    for (const source of ['root = Video("http://example.org/v.mp4")', 'root = Audio("https://user:secret@example.org/a.mp3")', 'root = ImageGallery([])', 'root = ImageGallery([{src:"http://example.org/a.png"}])', 'root = MapMarker("Invalid",91,181)']) expect(validateSource(source).ok).toBe(false);
+    expect(componentReference(["Map", "MapMarker"])).toContain("WGS-84");
+    expect(componentReference(["Video", "Audio", "ImageGallery"])).toContain("HTTPS");
+    expect(componentReference(["YouTube"])).toContain("in-app browser");
   });
 });
 

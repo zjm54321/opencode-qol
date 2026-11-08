@@ -64,7 +64,7 @@ if (process.env.QOL_VENDOR_CONFIG) {
 } else {
   await copy(path.join(repository, "vendor"), path.join(assets, "vendor"))
 }
-for (const name of ["session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp"]) {
+for (const name of ["session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp", "native-ui"]) {
   await copy(path.join(repository, "plugins", name), path.join(assets, "plugins", name))
 }
 await fs.copyFile(required("QOL_MCP_SERVERS_CONFIG"), path.join(assets, "plugins/bundled-mcp/servers.json"))
@@ -114,7 +114,7 @@ if (process.env.QOL_SKILLS_CONFIG) {
   }
 
   // Local repository skills
-  for (const name of ["start-work", "image-generation"]) {
+  for (const name of ["start-work", "image-generation", "native-ui"]) {
     const src = path.join(repository, "defaults/skills", name)
     await copy(src, path.join(assets, "vendor/oh-my-opencode-slim/src/skills", name))
   }

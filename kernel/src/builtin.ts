@@ -11,6 +11,7 @@ import gptTaste from "./plugins/gpt-taste/index.js"
 import modelPolicy from "./plugins/model-policy/index.js"
 import desktopBridge from "./plugins/desktop-bridge/src/index.ts"
 import bundledMcp from "./plugins/bundled-mcp/src/index.ts"
+import nativeUi from "./plugins/native-ui/src/index.ts"
 
 function adapt(definition: EffectPlugin | PromisePlugin): EffectPlugin {
   const plugin = "effect" in definition ? definition : fromPromise(definition)
@@ -30,4 +31,5 @@ export const QolPlugins: readonly EffectPlugin[] = [
   gptTaste,
   modelPolicy,
   desktopBridge,
+  nativeUi,
 ].map(adapt)

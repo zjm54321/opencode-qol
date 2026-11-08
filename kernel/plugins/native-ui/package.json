@@ -1,0 +1,11 @@
+{
+  "name": "opencode-native-ui",
+  "version": "0.1.0",
+  "description": "Validated OpenUI Lang for native desktop cards",
+  "displayName": "Native UI",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": "./src/index.ts"
+}

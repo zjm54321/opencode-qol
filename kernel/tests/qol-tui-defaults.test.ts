@@ -45,11 +45,12 @@ describe("native image generation build registration", () => {
     const plugins = builtin.match(/export const QolPlugins: readonly EffectPlugin\[\] = \[([\s\S]*?)\]\.map\(adapt\)/)?.[1]
     expect(plugins).toBeDefined()
     expect(plugins!.split(",").map((name) => name.trim()).filter(Boolean)).toEqual([
-      "bundledMcp", "omo", "billion", "sessionReader", "clearEncrypted", "gptTaste", "modelPolicy", "desktopBridge",
+      "bundledMcp", "omo", "billion", "sessionReader", "clearEncrypted", "gptTaste", "modelPolicy", "desktopBridge", "nativeUi",
     ])
     expect([...builtin.matchAll(/from "\.\/plugins\/([^"]+)"/g)].map((match) => match[1])).toEqual([
       "session-reader/src/index.ts", "clear-encrypted/src/index.ts", "gpt-taste/index.js",
       "model-policy/index.js", "desktop-bridge/src/index.ts", "bundled-mcp/src/index.ts",
+      "native-ui/src/index.ts",
     ])
   })
 
@@ -57,10 +58,10 @@ describe("native image generation build registration", () => {
     const prepare = await Bun.file(new URL("../nix/prepare-source.mjs", import.meta.url)).text()
     const names = prepare.match(/for \(const name of (\[[^\]]+\])\) \{\n  await copy\(path\.join\(repository, "plugins", name\)/)?.[1]
     expect(names).toBeDefined()
-    expect(JSON.parse(names!)).toEqual(["session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp"])
+    expect(JSON.parse(names!)).toEqual(["session-reader", "clear-encrypted", "desktop-bridge", "bundled-mcp", "native-ui"])
   })
 
-  test("the retained image skill comes from defaults and is copied only to OMO", async () => {
+  test("local skills come from packaged defaults and are mirrored to OMO", async () => {
     const prepare = await Bun.file(new URL("../nix/prepare-source.mjs", import.meta.url)).text()
     const localSkills = prepare.match(/\/\/ Local repository skills\n([\s\S]*?)\n\n  \/\/ Bundle/)?.[1]
     expect(localSkills).toBeDefined()
@@ -71,8 +72,19 @@ describe("native image generation build registration", () => {
     expect(copies).toEqual([
       ["/repository/defaults/skills/start-work", "/assets/vendor/oh-my-opencode-slim/src/skills/start-work"],
       ["/repository/defaults/skills/image-generation", "/assets/vendor/oh-my-opencode-slim/src/skills/image-generation"],
+      ["/repository/defaults/skills/native-ui", "/assets/vendor/oh-my-opencode-slim/src/skills/native-ui"],
     ])
     expect(prepare.split('await copy(path.join(repository, "defaults"), path.join(assets, "defaults"))')).toHaveLength(2)
+    expect(prepare).toContain('defaultCfg.skills = [path.join(output, "defaults/skills")]')
+  })
+
+  test("the native UI skill joins the OMO installer registry for primary orchestration", async () => {
+    const patch = await Bun.file(new URL("../patches/omo-qol-enhancements.patch", import.meta.url)).text()
+    const entry = patch.match(/\+  \{\n\+    name: 'native-ui',[\s\S]*?\n\+  \},/)?.[0]
+    expect(entry).toBeDefined()
+    expect(entry).toContain("allowedAgents: ['orchestrator']")
+    expect(entry).toContain("sourcePath: 'src/skills/native-ui'")
+    expect(await Bun.file(new URL("../defaults/skills/native-ui/SKILL.md", import.meta.url)).exists()).toBe(true)
   })
 
   test("QoL global defaults leave image provider and model selection to user configuration", async () => {

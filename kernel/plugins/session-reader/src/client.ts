@@ -16,7 +16,11 @@ export interface SessionInfo {
   parentID?: string;
   location?: { directory: string; workspaceID?: string };
   directory?: string;
-  time?: { created: number; updated: number; archived?: number };
+  agent?: string;
+  model?: string | { id: string; providerID?: string; variant?: string };
+  outcome?: string;
+  cost?: number;
+  time?: { created: unknown; updated: unknown; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -25,7 +29,15 @@ export interface MessagePart {
   text?: string;
   name?: string;
   tool?: string;
-  state?: { status: string; error?: unknown; [key: string]: unknown };
+  state?: {
+    status: string;
+    input?: unknown;
+    content?: MessagePart[] | string;
+    output?: unknown;
+    metadata?: Record<string, unknown>;
+    error?: unknown;
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 
@@ -42,6 +54,10 @@ export interface SessionMessage {
   recent?: string;
   error?: unknown;
   exit?: number;
+  time?: unknown;
+  model?: string | { id: string; providerID?: string; variant?: string };
+  finish?: string;
+  outcome?: string;
   [key: string]: unknown;
 }
 
@@ -60,6 +76,7 @@ export interface ListSessionsOptions {
   directory?: string;
   cursor?: string;
   order?: Order;
+  parentID?: string;
 }
 
 export interface SessionMessagesOptions {
@@ -124,6 +141,11 @@ export interface ClientOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+/** A response from a usable service is authoritative; do not replace it with active context. */
+export class ServiceResponseError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
 export class OpenCodeClient {
   private readonly timeoutMs: number;
   private readonly fetcher: typeof globalThis.fetch;
@@ -142,13 +164,18 @@ export class OpenCodeClient {
     return this.get(this.sessionPath(sessionID), {}, signal);
   }
 
-  getSessionMessages(opts: SessionMessagesOptions, signal?: AbortSignal): Promise<Page<SessionMessage>> {
+  getSessionMessages(opts: SessionMessagesOptions, signal?: AbortSignal, timeoutMs = 20_000): Promise<Page<SessionMessage>> {
     const { sessionID, ...query } = opts;
-    return this.get(`${this.sessionPath(sessionID)}/message`, query, signal);
+    return this.get(`${this.sessionPath(sessionID)}/message`, query, signal, timeoutMs);
   }
 
-  getSessionDiff(opts: { sessionID: string }, signal?: AbortSignal): Promise<Data<FileDiff[]>> {
-    return this.get(`${this.sessionPath(opts.sessionID)}/diff`, {}, signal);
+  getSessionMessage(sessionID: string, messageID: string, signal?: AbortSignal, timeoutMs = 20_000): Promise<Data<SessionMessage>> {
+    return this.get(`${this.sessionPath(sessionID)}/message/${encodeURIComponent(messageID)}`, {}, signal, timeoutMs);
+  }
+
+  getSessionDiff(opts: { sessionID: string; from?: string; to?: string }, signal?: AbortSignal): Promise<Data<FileDiff[]>> {
+    const { sessionID, ...query } = opts;
+    return this.get(`${this.sessionPath(sessionID)}/diff`, query, signal);
   }
 
   getSessionContext(sessionID: string, signal?: AbortSignal): Promise<Data<SessionMessage[]>> {
@@ -160,14 +187,14 @@ export class OpenCodeClient {
     return `/api/session/${encodeURIComponent(sessionID)}`;
   }
 
-  private async get<T>(path: string, query: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<T> {
+  private async get<T>(path: string, query: Record<string, string | number | undefined> = {}, signal?: AbortSignal, timeoutMs = this.timeoutMs): Promise<T> {
     signal?.throwIfAborted();
     // Reload on each request so a restarted service's URL/password is picked up.
     const registration = await readServiceRegistration(this.options.stateDirectory, this.options.channel);
     const url = new URL(path, registration.url);
     url.search = formatOptions(query).toString();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     const authorization = registration.password === undefined ? undefined : Buffer.from(`opencode:${registration.password}`).toString("base64");
     const redact = (value: string) => {
@@ -188,7 +215,7 @@ export class OpenCodeClient {
       if (!response.ok) {
         const text = redact(await response.text()).replace(/\s+/g, " ").trim().slice(0, 300);
         const hint = response.status === 401 || response.status === 403 ? " Check the OpenCode service credentials." : "";
-        throw new Error(`HTTP ${response.status} ${response.statusText}${text ? `: ${text}` : ""}.${hint}`);
+        throw new ServiceResponseError(response.status, `HTTP ${response.status} ${response.statusText}${text ? `: ${text}` : ""}.${hint}`);
       }
       try {
         return await response.json() as T;
@@ -198,7 +225,8 @@ export class OpenCodeClient {
       }
     } catch (error) {
       if (signal?.aborted) throw signal.reason;
-      if (controller.signal.aborted) throw new Error(`OpenCode GET ${path} timed out after ${this.timeoutMs}ms.`);
+      if (error instanceof ServiceResponseError) throw error;
+      if (controller.signal.aborted) throw new Error(`OpenCode GET ${path} timed out after ${timeoutMs}ms.`);
       throw new Error(`OpenCode GET ${path} failed: ${redact(error instanceof Error ? error.message : String(error))}`);
     } finally {
       clearTimeout(timer);

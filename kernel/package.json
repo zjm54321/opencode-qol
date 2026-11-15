@@ -6,7 +6,7 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "dependencies": {
-    "@ast-grep/cli": "0.51.0",
+    "@ast-grep/cli": "0.51.2",
     "@earendil-works/pi-tui": "1.4.0",
     "@mozilla/readability": "0.6.0",
     "@opencode-qol/bili-zod": "npm:zod@4.6.7",

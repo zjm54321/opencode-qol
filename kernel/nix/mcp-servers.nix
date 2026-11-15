@@ -4,8 +4,8 @@ let
     type = "github";
     owner = "NixOS";
     repo = "nixpkgs";
-    rev = "885ba4d038f10c3d17d7a92e8c3cc185b99c9158";
-    narHash = "sha256-e/yiZ31gXRROBDcnOtT3YwDQ73NVG9Cepccbt86LIn8=";
+    rev = "e126e9e73c335158ff8279ac14d5f4afec153716";
+    narHash = "sha256-PqJ89Z/qwQa2fB2C0j/GjiviARAtBzVPDUxnbIY6EPA=";
   });
   tools = import toolsSource { inherit (pkgs.stdenv.hostPlatform) system; };
   inherit (tools) lib;

@@ -69,7 +69,7 @@
 
     # MCP servers fixed package set & vendor upstreams
     mcp-nixpkgs = {
-      url = "github:NixOS/nixpkgs/885ba4d038f10c3d17d7a92e8c3cc185b99c9158";
+      url = "github:NixOS/nixpkgs/e126e9e73c335158ff8279ac14d5f4afec153716";
       flake = false;
     };
     oh-my-opencode-slim-src = {

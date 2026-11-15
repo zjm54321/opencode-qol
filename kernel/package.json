@@ -23,7 +23,7 @@
     "@opencode-ai/plugin": "1.19.5",
     "esbuild": "0.28.2",
     "fzstd": "0.1.1",
-    "node-forge": "1.4.2",
+    "node-forge": "1.4.3",
     "tar": "7.5.22",
     "tsup": "9.0.0",
     "typebox": "1.4.3",
